@@ -75,6 +75,12 @@ describe("exifVerdict", () => {
     expect(exifVerdict(info6, upright, { ...upright, roll: -88 }).status).toBe("notApplied");
   });
 
+  it("orientation 6 인데 roll 은 0 근처여도 크기가 원본 그대로면 반영 안 됨(크기 검사가 따로 돈다)", () => {
+    const v = exifVerdict(info6, { width: 4032, height: 3024, faces: 1, roll: 0 }, upright);
+    expect(v.status).toBe("notApplied");
+    expect(v.note).toContain("크기 4032x3024");
+  });
+
   it("orientation 1·없음은 셋이 같아도 판정 불가(회전 정보가 없는 사진)", () => {
     const same = { width: 3024, height: 4032, faces: 1, roll: 0 };
     expect(exifVerdict({ ...info6, orientation: 1 }, same, same).status).toBe("undecidable");
