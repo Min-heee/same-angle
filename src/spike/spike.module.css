@@ -416,3 +416,12 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* 미리보기 줄의 경고(카메라 중단 등). 색만이 아니라 글자로도 알린다. */
+.alert {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bad-wash);
+  color: var(--bad);
+  font-weight: 700;
+}

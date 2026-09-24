@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { unlockAudio } from "./beep";
-import { SpikeProvider, useSpike } from "./context";
+import { SpikeProvider, useLive, useSpike } from "./context";
 import { SECTION_NAV, STATUS_MARK, navLabel } from "./nav";
 import { installFetchGuard } from "./netguard";
 import { CameraSection } from "./sections/Camera";
@@ -37,7 +37,8 @@ const STATUS_COLOR = {
 } as const;
 
 function Preview({ big, setBig }: { big: boolean; setBig: (f: (b: boolean) => boolean) => void }) {
-  const { videoRef, overlayRef, stream, live, loopRunning } = useSpike();
+  const { videoRef, overlayRef, stream, loopRunning, camState } = useSpike();
+  const live = useLive();
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -81,7 +82,12 @@ function Preview({ big, setBig }: { big: boolean; setBig: (f: (b: boolean) => bo
       </div>
       <div className={s.liveLine}>
         <span>{size ? `${size.w}×${size.h}` : "—"}</span>
-        <span>{loopRunning ? `${fmt(live?.fps, 1)}fps` : "추론 멈춤"}</span>
+        <span>{loopRunning ? (live?.stale ? "프레임 안 옴" : `${fmt(live?.fps, 1)}fps`) : "추론 멈춤"}</span>
+        {camState === "muted" || camState === "ended" ? (
+          <span className={s.alert} role="status">
+            카메라 중단됨
+          </span>
+        ) : null}
         <span>얼굴 {live?.last?.faces ?? "—"}</span>
         <span>{d ? `y ${fmt(d.yaw)} p ${fmt(d.pitch)} r ${fmt(d.roll)}` : ""}</span>
         <button className={s.small} onClick={() => setBig((b) => !b)} style={{ marginLeft: "auto" }}>
@@ -129,8 +135,32 @@ function BottomNav({ setBig }: { setBig: (f: (b: boolean) => boolean) => void })
   );
 }
 
+/** 임시 저장본을 복원했으면 알리고, 버릴 수 있게 한다. */
+function RestoredChip() {
+  const { restored, discardDraft } = useSpike();
+  if (!restored) return null;
+  const at = new Date(restored.savedAt);
+  const hm = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  return (
+    <p className={s.note} role="status">
+      이전 결과를 복원했습니다({hm} 저장). 이어서 하면 됩니다.{" "}
+      <button
+        className={s.small}
+        onClick={() => {
+          if (window.confirm("복원한 결과를 버리고 처음부터 할까요? 내보내지 않은 결과는 사라집니다.")) discardDraft();
+        }}
+      >
+        버리기
+      </button>
+    </p>
+  );
+}
+
 export default function SpikeApp() {
   const [big, setBig] = useState(false);
+  // 점검 상태(임시 저장 복원 포함)는 브라우저에서만 시작한다. 정적 내보내기 프리렌더에는 머리말만.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   useEffect(() => {
     // MediaPipe 사용 통계(odml.pa.googleapis.com)가 기기를 떠나지 않게, 무엇이든 불러오기 전에.
     installFetchGuard();
@@ -148,6 +178,17 @@ export default function SpikeApp() {
     };
   }, []);
 
+  if (!mounted) {
+    return (
+      <main className={s.page}>
+        <header className={s.header}>
+          <h1>D1 실기기 점검</h1>
+          <p className={s.lede}>불러오는 중…</p>
+        </header>
+      </main>
+    );
+  }
+
   return (
     <SpikeProvider>
       <main className={s.page}>
@@ -157,6 +198,11 @@ export default function SpikeApp() {
             같은각도를 만들기 전에 아이폰 사파리에서 카메라·얼굴 모델·센서·공유가 실제로 어떻게 동작하는지 잽니다. 위에서부터 차례로
             돌리고, 마지막 12번에서 결과 JSON 을 내보내세요. 각 섹션의 번호는 <code>docs/TECH-NOTES.md</code> 6절 체크리스트와
             이어집니다.
+          </p>
+          <p className={s.lede}>
+            <strong>시작 전에 설정 &gt; 디스플레이 및 밝기 &gt; 자동 잠금을 &lsquo;안 함&rsquo;으로.</strong> 흔들림 기록(30초)이 자동 잠금과
+            겹치고, 화면이 꺼지면 그 기록은 버려집니다. 결과는 이 기기에 임시 저장되지만, 사파리를 떠나는 7번(사진 선택)·10번(파일
+            앱) 전에 12번에서 <strong>한 번 중간 내보내기</strong>를 해 두세요.
           </p>
           <p className={s.lede}>
             <strong>무음 모드(옆면 스위치)를 끄고 소리를 켜 두세요.</strong> 후면 카메라로 찍는 동안에는 화면을 볼 수 없어
@@ -169,6 +215,7 @@ export default function SpikeApp() {
             CSP). 막힌 횟수는 11번에 적힙니다. 실기기 네트워크 기록으로 확인하기 전입니다. 결과 JSON 에는 이미지·랜드마크가
             들어가지 않습니다.
           </p>
+          <RestoredChip />
         </header>
         <Preview big={big} setBig={setBig} />
         <EnvSection />

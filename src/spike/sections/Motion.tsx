@@ -18,6 +18,8 @@ import type { JsonValue } from "@/core/report";
 import { angleDiffDeg, circularMeanDeg, phoneRollDeg, relToCircularMeanDeg } from "@/core/motion";
 import { summarize, type Summary } from "@/core/stats";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
+import { MOTION_CONDITIONS, motionProgress } from "../progress";
 import s from "../spike.module.css";
 import { KV, Section } from "../ui";
 import { errText, fmt, num } from "../util";
@@ -55,14 +57,15 @@ function round(x: Summary | null): JsonValue {
 const finite = (xs: (number | null)[]) => xs.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
 
 export function MotionSection() {
-  const { sections, setSection, beep } = useSpike();
+  const { sections, setSection, beep, subscribeInterrupt, restored } = useSpike();
   const sec = sections.motion;
+  const [condition, setCondition] = useState<string>("upright");
   const [perm, setPerm] = useState<{ motion: string; orientation: string } | null>(null);
   const [listening, setListening] = useState(false);
   const [liveM, setLiveM] = useState<MotionSample | null>(null);
   const [liveO, setLiveO] = useState<OrientSample | null>(null);
   const [remaining, setRemaining] = useState<number | null>(null);
-  const [results, setResults] = useState<JsonValue[]>([]);
+  const [results, setResults] = useState<JsonValue[]>(() => restoredList<JsonValue>(restored?.sections.motion.data, "results"));
 
   const lastM = useRef<MotionSample | null>(null);
   const lastO = useRef<OrientSample | null>(null);
@@ -154,10 +157,28 @@ export function MotionSection() {
     recM.current = [];
     recO.current = [];
     const t0 = performance.now();
+    const cond = condition;
     beep("start");
+    setSection("motion", { status: "running", reason: null });
     setRemaining(RECORD_S);
     const tick = setInterval(() => setRemaining(Math.max(0, RECORD_S - Math.floor((performance.now() - t0) / 1000))), 250);
-    setTimeout(() => {
+    // 화면이 꺼지거나 다른 앱으로 가면 센서 이벤트가 끊긴다. 그 기록은 버린다.
+    const unsubInt = subscribeInterrupt((k) => {
+      if (k !== "hidden") return;
+      clearInterval(tick);
+      clearTimeout(done);
+      unsubInt();
+      setRemaining(null);
+      recM.current = null;
+      recO.current = null;
+      setSection("motion", {
+        status: "failed",
+        reason: "화면이 꺼졌거나 다른 앱으로 가서 이번 기록을 버렸습니다 — 자동 잠금을 끄고 다시 [10초 기록].",
+      });
+      beep("error");
+    });
+    const done = setTimeout(() => {
+      unsubInt();
       clearInterval(tick);
       setRemaining(null);
       const ms = recM.current ?? [];
@@ -172,6 +193,7 @@ export function MotionSection() {
         const relMean = relToCircularMeanDeg(rolls) ?? [];
         const dur = (performance.now() - t0) / 1000;
         const r: JsonValue = {
+          condition: cond,
           seconds: RECORD_S,
           orientation: screen.orientation?.type ?? null,
           motionEvents: ms.length,
@@ -186,9 +208,16 @@ export function MotionSection() {
           beta: round(summarize(finite(os.map((x) => x.beta)))),
           gamma: round(summarize(finite(os.map((x) => x.gamma)))),
         };
-        setResults((p) => [...p, r].slice(-10));
-        setSection("motion", { status: ms.length > 0 ? "done" : "failed", reason: ms.length > 0 ? null : "10초 동안 devicemotion 이벤트가 없습니다." });
-        beep("end");
+        const next = [...results, r].slice(-10);
+        setResults(next);
+        if (ms.length === 0) {
+          setSection("motion", { status: "failed", reason: "10초 동안 devicemotion 이벤트가 없습니다." });
+          beep("error");
+        } else {
+          const p = motionProgress(next.map((x) => String((x as { condition?: unknown }).condition ?? "")));
+          setSection("motion", { status: p.done ? "done" : "running", reason: p.note });
+          beep("end");
+        }
       } catch (e) {
         setSection("motion", { status: "failed", reason: errText(e) });
         beep("error");
@@ -201,10 +230,19 @@ export function MotionSection() {
       no={8}
       title="폰 기울기"
       refText="TECH-NOTES 6절 항목 9(DeviceMotion·Orientation 권한과 세로 상태 안정성)"
-      how={`[동작 센서 허용]을 한 번 누르고, 폰을 세로로 곧게 든 채 [${RECORD_S}초 기록]. 곧게·오른쪽으로 조금 기울여 각각 해 보세요.`}
+      how={`[동작 센서 허용]을 한 번 누르고, 조건을 고른 뒤 그 자세로 폰을 들고 [${RECORD_S}초 기록]. 두 조건(세로 곧게, 화면 위쪽을 오른쪽으로 약 15° — 화면을 보는 사람 기준 시계 방향)을 각각 한 번씩 하면 완료.`}
       status={sec.status}
       reason={sec.reason}
     >
+      <div className={s.row}>
+        <select className={s.select} value={condition} onChange={(e) => setCondition(e.target.value)} aria-label="기울기 조건">
+          {MOTION_CONDITIONS.map((c) => (
+            <option key={c.id} value={c.id}>
+              조건: {c.label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className={s.row}>
         <button className={s.btn} onClick={requestPerm}>
           동작 센서 허용
@@ -227,6 +265,7 @@ export function MotionSection() {
         <ul className={s.list}>
           {results.map((r, i) => {
             const x = r as {
+              condition?: string;
               phoneRollCircularMean: number | null;
               phoneRollRelToMean: { std: number | null } | null;
               phoneRollRelToFirst: { std: number | null } | null;
@@ -234,7 +273,7 @@ export function MotionSection() {
             };
             return (
               <li key={i}>
-                롤 원형 평균 {fmt(x.phoneRollCircularMean)}° · 평균 대비 σ {fmt(x.phoneRollRelToMean?.std, 2)}° · 첫 표본 대비 σ{" "}
+                {MOTION_CONDITIONS.find((c) => c.id === x.condition)?.label.split("(")[0] ?? "조건 모름"} · 롤 원형 평균 {fmt(x.phoneRollCircularMean)}° · 평균 대비 σ {fmt(x.phoneRollRelToMean?.std, 2)}° · 첫 표본 대비 σ{" "}
                 {fmt(x.phoneRollRelToFirst?.std, 2)}° · {x.motionHz}Hz
               </li>
             );

@@ -6,12 +6,20 @@
  * 통과 문턱은 한 손 정지 상태 잡음의 3배 이상이어야 한다(PRD 5절). 그 σ 를 여기서 잰다.
  * 얼굴이 정확히 1개이고 분해가 된 프레임만 지표에 넣고, 나머지는 종류별로 센다
  * — 빠진 프레임 수가 결과의 일부다.
+ *
+ * 깨진 기록을 '완료'로 쌓지 않는다: 화면 꺼짐·다른 앱·루프 정지·카메라 끊김이 생기면 곧바로 버리고
+ * 실패로 적는다. 끝까지 가도 프레임이 기대치(시작 fps × 30초)의 80% 미만이거나, 최대 간격이
+ * 500ms 를 넘거나, 얼굴 프레임이 절반 미만이면 실패다(livestats.checkRecording). 기록 중에는
+ * 카메라·모델 버튼이 막힌다(context.recording).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JsonValue } from "@/core/report";
 import { summarize, type Summary } from "@/core/stats";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
+import { checkRecording } from "../livestats";
+import { jitterProgress } from "../progress";
 import type { FrameSample } from "../sample";
 import s from "../spike.module.css";
 import { Section } from "../ui";
@@ -20,6 +28,10 @@ import { errText, fmt, num } from "../util";
 const HOLDS = [
   { id: "fixed", label: "폰 고정" },
   { id: "oneHand", label: "한 손" },
+] as const;
+const SUBJECTS = [
+  { id: "self", label: "피사체: 본인" },
+  { id: "mannequin", label: "피사체: 마네킹" },
 ] as const;
 const VIEWS = [
   { id: "front", label: "정면" },
@@ -55,6 +67,15 @@ function roundSummary(x: Summary | null): JsonValue {
 interface JitterResult {
   hold: string;
   view: string;
+  /** 본인/마네킹(체크리스트 항목 6 의 마네킹 검출과 구별). */
+  subject: string;
+  /** 찍은 카메라(track.getSettings().facingMode). 모르면 null. */
+  facingMode: string | null;
+  /** 기록이 쓸 만했는가(checkRecording). 실패 기록도 남기되 완료 조건에는 세지 않는다. */
+  ok: boolean;
+  expectedFrames: number | null;
+  maxGapMs: number | null;
+  note: string | null;
   seconds: number;
   engine: string;
   frames: number;
@@ -66,12 +87,16 @@ interface JitterResult {
 }
 
 export function JitterSection() {
-  const { subscribe, loopRunning, engine, sections, setSection, beep } = useSpike();
+  const { subscribe, subscribeInterrupt, loopRunning, engine, sections, setSection, beep, setRecording, liveRef, stream, restored } =
+    useSpike();
   const sec = sections.jitter;
   const [hold, setHold] = useState<string>("oneHand");
   const [view, setView] = useState<string>("front");
+  const [subject, setSubject] = useState<string>("self");
   const [remaining, setRemaining] = useState<number | null>(null);
-  const [results, setResults] = useState<JitterResult[]>([]);
+  const [results, setResults] = useState<JitterResult[]>(() =>
+    restoredList<JitterResult>(restored?.sections.jitter.data, "results"),
+  );
   const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => cleanupRef.current?.(), []);
@@ -86,9 +111,26 @@ export function JitterSection() {
     const samples: FrameSample[] = [];
     const unsub = subscribe((x) => samples.push(x));
     const t0 = performance.now();
+    const cur = liveRef.current;
+    const fpsAtStart = cur && !cur.stale ? cur.fps : null;
+    const facingMode = (stream?.getVideoTracks()[0]?.getSettings().facingMode as string | undefined) ?? null;
     beep("start");
+    setRecording("흔들림");
     setSection("jitter", { status: "running", reason: null });
     setRemaining(JITTER_SECONDS);
+
+    // 중단되면 곧바로 버린다(숨김 구간이 intervalMs 요약에 섞이지 않게).
+    const unsubInt = subscribeInterrupt((k) => {
+      cleanup();
+      const why =
+        k === "hidden"
+          ? "화면이 꺼졌거나 다른 앱으로 가서 이번 기록을 버렸습니다 — 자동 잠금을 끄고 다시 [30초 기록]."
+          : k === "loopStopped"
+            ? "추론 루프가 멈춰 이번 기록을 버렸습니다 — 2번에서 [추론 시작] 뒤 다시."
+            : "카메라가 끊겨 이번 기록을 버렸습니다 — 1번 [카메라 다시 켜기] 뒤 다시.";
+      setSection("jitter", { status: "failed", reason: why });
+      beep("error");
+    });
 
     const tick = setInterval(() => {
       const left = Math.max(0, JITTER_SECONDS - Math.floor((performance.now() - t0) / 1000));
@@ -117,9 +159,23 @@ export function JitterSection() {
           Metric,
           JsonValue
         >;
+        const check = checkRecording({
+          seconds: JITTER_SECONDS,
+          fpsAtStart,
+          frames: samples.length,
+          valid: valid.length,
+          intervals: samples.map((x) => x.intervalMs).filter((v): v is number => typeof v === "number"),
+          faceOptional: view === "crown",
+        });
         const r: JitterResult = {
           hold,
           view,
+          subject,
+          facingMode,
+          ok: check.ok,
+          expectedFrames: check.expectedFrames,
+          maxGapMs: num(check.maxGapMs, 1),
+          note: check.reason,
           seconds: JITTER_SECONDS,
           engine: `${engine.delegate}/${engine.numFaces}`,
           frames: samples.length,
@@ -129,9 +185,19 @@ export function JitterSection() {
           noDecompose: samples.filter((x) => x.faces === 1 && x.dec === null).length,
           summaries,
         };
-        setResults((p) => [...p, r].slice(-JITTER_KEEP));
-        setSection("jitter", { status: "done", reason: null });
-        beep("end");
+        const next = [...results, r].slice(-JITTER_KEEP);
+        setResults(next);
+        if (!check.ok) {
+          setSection("jitter", { status: "failed", reason: check.reason });
+          beep("error");
+        } else {
+          const p = jitterProgress(next.map((x) => ({ hold: x.hold, view: x.view, ok: x.ok !== false })));
+          setSection("jitter", {
+            status: p.done ? "done" : "running",
+            reason: [check.reason, p.note].filter(Boolean).join(" · "),
+          });
+          beep("end");
+        }
       } catch (e) {
         setSection("jitter", { status: "failed", reason: errText(e) });
         beep("error");
@@ -140,17 +206,20 @@ export function JitterSection() {
 
     const cleanup = () => {
       unsub();
+      unsubInt();
+      setRecording(null);
       clearInterval(tick);
       clearTimeout(done);
       setRemaining(null);
       cleanupRef.current = null;
     };
     cleanupRef.current = cleanup;
-  }, [beep, engine, hold, setSection, subscribe, view]);
+  }, [beep, engine, hold, liveRef, results, setRecording, setSection, stream, subject, subscribe, subscribeInterrupt, view]);
 
   const cancel = () => {
     cleanupRef.current?.();
-    setSection("jitter", { status: results.length ? "done" : "idle", reason: "기록을 취소했습니다." });
+    const p = jitterProgress(results.map((x) => ({ hold: x.hold, view: x.view, ok: x.ok !== false })));
+    setSection("jitter", { status: results.length ? (p.done ? "done" : "running") : "idle", reason: `기록을 취소했습니다. ${p.note}` });
   };
 
   const std = (r: JitterResult, m: Metric, d = 2) => {
@@ -163,7 +232,7 @@ export function JitterSection() {
       no={3}
       title="흔들림(실험 1)"
       refText="TECH-NOTES 6절 항목 6(30° 숙임·45° 사선 떨림, 마네킹) · 5절 실험 1"
-      how={`잡는 방식·뷰를 고르고 [${JITTER_SECONDS}초 기록]. 삐 소리부터 끝 소리(삐삐)까지 자세를 유지하세요. 조합마다 반복합니다.`}
+      how={`잡는 방식·뷰·피사체를 고르고 [${JITTER_SECONDS}초 기록]. 삐 소리부터 끝 소리(삐삐)까지 화면을 건드리지 말고 자세를 유지하세요(자동 잠금은 '안 함'). 완료 조건: 한 손 × 정면·숙임·사선.`}
       status={sec.status}
       reason={sec.reason}
     >
@@ -177,6 +246,13 @@ export function JitterSection() {
         </select>
         <select className={s.select} value={view} onChange={(e) => setView(e.target.value)}>
           {VIEWS.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.label}
+            </option>
+          ))}
+        </select>
+        <select className={s.select} value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="피사체">
+          {SUBJECTS.map((v) => (
             <option key={v.id} value={v.id}>
               {v.label}
             </option>
@@ -201,7 +277,9 @@ export function JitterSection() {
         <ul className={s.list}>
           {results.map((r, i) => (
             <li key={i}>
-              {HOLDS.find((h) => h.id === r.hold)?.label}·{VIEWS.find((v) => v.id === r.view)?.label} · 유효 {r.valid}/{r.frames} · σ
+              {r.ok === false ? "✕ " : ""}
+              {HOLDS.find((h) => h.id === r.hold)?.label}·{VIEWS.find((v) => v.id === r.view)?.label}
+              {r.subject === "mannequin" ? "·마네킹" : ""} · 유효 {r.valid}/{r.frames} · σ
               yaw {std(r, "yaw")} pitch {std(r, "pitch")} roll {std(r, "roll")}° · σ 중심x {std(r, "cx", 4)}
             </li>
           ))}
