@@ -12,7 +12,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { JsonValue } from "@/core/report";
 import { diffSamples, sampleToJson } from "../compare";
-import { summarizeResult, useSpike, type FrameSample } from "../context";
+import { useSpike } from "../context";
+import { summarizeResult, type FrameSample } from "../sample";
 import { grabVideoFrame } from "../canvas";
 import type { Delegate } from "../engine";
 import s from "../spike.module.css";

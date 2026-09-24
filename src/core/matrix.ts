@@ -68,7 +68,7 @@ export function at(data: ArrayLike<number>, r: number, c: number, layout: Matrix
 }
 
 export interface Decomposed {
-  /** 도(°). 부호는 YAW_SIGN 을 곱한 값. */
+  /** 도(°). `decompose` 는 SIGN 상수를 곱한 값, `decomposeRaw` 는 곱하기 전 규약 값. */
   yaw: number;
   pitch: number;
   roll: number;
@@ -90,7 +90,7 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 /**
- * 행렬을 yaw·pitch·roll(도)·스케일·이동으로 분해한다.
+ * 행렬을 yaw·pitch·roll(도)·스케일·이동으로 분해한다. 각은 **부호 상수를 곱하기 전**의 규약 값이다.
  *
  * s = ‖첫 열‖ 로 나눠 스케일을 걷어 낸 뒤, R = Ry(yaw)·Rx(pitch)·Rz(roll) 규약으로
  *   R12 = −sin(pitch)            → pitch = asin(−R12)
@@ -101,8 +101,11 @@ function clamp(v: number, lo: number, hi: number): number {
  * 나오고, NaN 은 이후 모든 비교를 조용히 거짓으로 만든다.
  *
  * 길이 ≠ 16, 비유한 값, 스케일이 0에 가까운 입력은 null. 0으로 채워 계속하지 않는다.
+ *
+ * 왜 따로 내보내는가: 테스트가 규약 각을 손 계산값과 직접 비교해야, SIGN 곱셈이 무엇이든
+ * (−1 이든 0 이든) 규약 쪽 결함을 가리지 못한다. 화면·보고서는 `decompose` 를 쓴다.
  */
-export function decompose(data: ArrayLike<number>, layout: MatrixLayout): Decomposed | null {
+export function decomposeRaw(data: ArrayLike<number>, layout: MatrixLayout): Decomposed | null {
   if (!isFiniteArray16(data)) return null;
   if (layout !== "col" && layout !== "row") return null;
 
@@ -123,18 +126,21 @@ export function decompose(data: ArrayLike<number>, layout: MatrixLayout): Decomp
     }
   }
 
-  const pitch = Math.asin(clamp(-R[1][2], -1, 1)) * RAD2DEG;
-  const yaw = Math.atan2(R[0][2], R[2][2]) * RAD2DEG;
-  const roll = Math.atan2(R[1][0], R[1][1]) * RAD2DEG;
-
   return {
-    yaw: YAW_SIGN * yaw,
-    pitch: PITCH_SIGN * pitch,
-    roll: ROLL_SIGN * roll,
+    yaw: Math.atan2(R[0][2], R[2][2]) * RAD2DEG,
+    pitch: Math.asin(clamp(-R[1][2], -1, 1)) * RAD2DEG,
+    roll: Math.atan2(R[1][0], R[1][1]) * RAD2DEG,
     scale: s,
     t: [m(0, 3), m(1, 3), m(2, 3)],
     orthoError,
   };
+}
+
+/** `decomposeRaw` 에 부호 상수(YAW/PITCH/ROLL_SIGN)를 곱한 값. 화면·보고서·픽스처가 쓰는 쪽. */
+export function decompose(data: ArrayLike<number>, layout: MatrixLayout): Decomposed | null {
+  const raw = decomposeRaw(data, layout);
+  if (!raw) return null;
+  return { ...raw, yaw: YAW_SIGN * raw.yaw, pitch: PITCH_SIGN * raw.pitch, roll: ROLL_SIGN * raw.roll };
 }
 
 /**

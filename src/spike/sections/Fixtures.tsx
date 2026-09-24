@@ -12,26 +12,15 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { decompose, detectLayout, elementwiseMedian } from "@/core/matrix";
-import { FIXTURE_NAMES, type FixtureName, type FixtureRecord } from "@/core/report";
+import { FIXTURE_NAMES, type FixtureName } from "@/core/report";
 import { useSpike } from "../context";
+import { FIXTURE_LABELS, fixtureFromMatrices } from "../fixture";
 import s from "../spike.module.css";
 import { Section } from "../ui";
-import { errText, fmt, num } from "../util";
-
-export const FIXTURE_LABELS: Record<FixtureName, string> = {
-  front: "정면",
-  selfLeft20: "자기 왼쪽 약 20°",
-  selfRight20: "자기 오른쪽 약 20°",
-  chinDown: "숙임",
-  chinUp: "젖힘",
-  tilt: "기울임",
-};
+import { errText, fmt } from "../util";
 
 const COUNTDOWN_S = 3;
 const COLLECT_MS = 1000;
-/** 1초에 이보다 적게 모이면 중앙값을 믿기 어렵다. [추론] 초깃값. */
-const MIN_FRAMES = 5;
 
 export function FixturesSection() {
   const { subscribe, loopRunning, engine, fixtures, setFixtures, sections, setSection, beep } = useSpike();
@@ -88,20 +77,7 @@ export function FixturesSection() {
               setCount(null);
               setActive(null);
               try {
-                if (mats.length < MIN_FRAMES) {
-                  throw new Error(`1초 동안 얼굴 1개 프레임이 ${mats.length}개뿐입니다(최소 ${MIN_FRAMES}).`);
-                }
-                const med = elementwiseMedian(mats);
-                if (!med) throw new Error("행렬 중앙값을 만들 수 없습니다(비유한 값).");
-                const layout = detectLayout(med);
-                const dec = layout ? decompose(med, layout) : null;
-                const rec: FixtureRecord = {
-                  name,
-                  matrix: med,
-                  layout,
-                  angles: dec ? { yaw: num(dec.yaw, 3)!, pitch: num(dec.pitch, 3)!, roll: num(dec.roll, 3)! } : null,
-                  frames: mats.length,
-                };
+                const rec = fixtureFromMatrices(name, mats);
                 setFixtures((prev) => [...prev.filter((f) => f.name !== name), rec]);
                 setSection("fixtures", { status: "done", reason: null });
                 beep("end");

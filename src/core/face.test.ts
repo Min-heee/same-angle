@@ -58,6 +58,36 @@ describe("faceBox", () => {
     expect(faceBox(pts, W, H, 20)!.touchesEdge).toBe(true);
   });
 
+  it("위쪽 가장자리(정수리·이마가 잘리는 구도)도 접촉", () => {
+    // minY = 0.005·1080 = 5.4 px ≤ 10
+    expect(
+      faceBox(
+        [
+          { x: 0.5, y: 0.005 },
+          { x: 0.6, y: 0.4 },
+        ],
+        W,
+        H,
+        10,
+      )!.touchesEdge,
+    ).toBe(true);
+  });
+
+  it("여백과 딱 같은 거리면 접촉(경계 포함)", () => {
+    // minX = (10/1920)·1920 = 10 px = 여백
+    expect(
+      faceBox(
+        [
+          { x: 10 / 1920, y: 0.5 },
+          { x: 0.6, y: 0.6 },
+        ],
+        W,
+        H,
+        10,
+      )!.touchesEdge,
+    ).toBe(true);
+  });
+
   it("오른쪽·아래 가장자리와 화면 밖 좌표도 접촉으로 본다", () => {
     expect(
       faceBox(

@@ -4,7 +4,7 @@
  */
 
 import type { JsonValue } from "@/core/report";
-import type { FrameSample } from "./context";
+import type { FrameSample } from "./sample";
 import { num } from "./util";
 
 export function sampleToJson(x: FrameSample | null): JsonValue {

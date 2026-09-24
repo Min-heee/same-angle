@@ -65,6 +65,18 @@ describe("laplacianVariance", () => {
     expect(laplacianVariance(y, 4, 3)).toBeCloseTo(625, 6);
   });
 
+  it("폭 3·높이 4, 세로 이웃이 있는 비정사각: 안쪽 두 칸 응답 10, −40 → 평균 −15, 모분산 625", () => {
+    // 행 간격은 폭(3)이다. 높이(4)로 착각하면 위·아래 이웃을 잘못 집어 −20·400 이 나온다.
+    const rows = [
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 10, 0],
+      [0, 0, 0],
+    ];
+    const y = lumaArray(grayRGBA(rows), 3, 4);
+    expect(laplacianVariance(y, 3, 4)).toBeCloseTo(625, 6);
+  });
+
   it("평평한 면은 0", () => {
     const y = new Float64Array(25).fill(77);
     expect(laplacianVariance(y, 5, 5)).toBe(0);

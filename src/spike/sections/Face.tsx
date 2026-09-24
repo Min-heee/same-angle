@@ -8,7 +8,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { EDGE_MARGIN_FRAC, useSpike } from "../context";
+import { useSpike } from "../context";
+import { EDGE_MARGIN_FRAC } from "../sample";
 import { loadFaceLandmarker, type Delegate } from "../engine";
 import s from "../spike.module.css";
 import { KV, Section } from "../ui";

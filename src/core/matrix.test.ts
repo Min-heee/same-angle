@@ -1,21 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
+  LAYOUT_EPS,
   PITCH_SIGN,
   ROLL_SIGN,
   YAW_SIGN,
   at,
   decompose,
+  decomposeRaw,
   detectLayout,
   elementwiseMedian,
 } from "./matrix";
+import { PHONE_ROLL_SIGN } from "./motion";
 
 /*
  * 기대값은 손으로 정한 자세(yaw·pitch·roll·scale·t)이고, 행렬은 테스트 안에서
  * Ry·Rx·Rz 를 직접 곱해 만든다. 구현의 분해 함수를 거꾸로 써서 기대값을 만들지 않는다.
  *
- * 부호: 분해 결과에는 SIGN 상수가 곱해진다. SIGN 은 D1 실측 픽스처로 정할 값이라
- * 여기서는 "상수가 무엇이든 규약대로 복원되는가"만 본다. 부호 자체의 옳고 그름은
- * 실측 픽스처 테스트(D2)가 맡는다 — 합성 데이터로는 부호 오류를 잡을 수 없다.
+ * 부호: 규약 자체는 `decomposeRaw` 를 손으로 정한 각과 직접 비교해 확인한다(SIGN 곱셈이
+ * 무엇이든 가리지 못하게). `decompose` 는 "SIGN 을 곱해 내보내는가"만 본다. SIGN 의 현재 값은
+ * 아래 고정 테스트가 따로 못 박는다 — 부호가 옳은지는 합성 데이터로 알 수 없고 D1 실측
+ * 픽스처(tests/fixtures/real-matrices.json)가 정한다.
  */
 
 type M3 = number[][];
@@ -85,11 +89,43 @@ const POSES = [
   { yaw: 44, pitch: -30, roll: 17, scale: 2.5, t: [0.5, -0.5, -60] },
 ];
 
+describe("부호 상수 고정", () => {
+  /*
+   * 부호 상수는 [추론] 값이다. 이 줄이 없으면 누가 SIGN 을 −1·0 으로 바꿔도 테스트가 모두
+   * 통과한다(기대값을 같은 상수로 만들기 때문). D1 픽스처(tests/fixtures/real-matrices.json)로
+   * 부호를 바꿀 때는 이 줄도 그 근거 커밋과 함께 바꾼다(TECH-NOTES 6절 항목 2 "상수 반전, 테스트 갱신").
+   */
+  it("YAW·PITCH·ROLL·PHONE_ROLL 부호는 지금 모두 +1", () => {
+    expect([YAW_SIGN, PITCH_SIGN, ROLL_SIGN, PHONE_ROLL_SIGN]).toEqual([1, 1, 1, 1]);
+  });
+});
+
 describe("detectLayout", () => {
   it.each(POSES)("열 우선은 'col', 행 우선은 'row' (yaw $yaw)", (p) => {
     const M = affine(p.yaw, p.pitch, p.roll, p.scale, p.t);
     expect(detectLayout(colMajor(M))).toBe("col");
     expect(detectLayout(rowMajor(M))).toBe("row");
+  });
+
+  it("마지막 행의 float 잡음 1e-6 은 허용하고, 1e-3 은 아핀이 아니라고 본다(LAYOUT_EPS = 1e-4)", () => {
+    expect(LAYOUT_EPS).toBe(1e-4);
+    const d = colMajor(affine(20, -10, 5, 1, [3.5, 1.25, -52]));
+    const noisy = [...d];
+    noisy[3] = 1e-6;
+    noisy[15] = 1 - 1e-6;
+    expect(detectLayout(noisy)).toBe("col");
+    const bad = [...d];
+    bad[3] = 1e-3;
+    expect(detectLayout(bad)).toBeNull();
+  });
+
+  it("이동 성분 하나만 0이 아니어도(tz = 0) 배치를 판별한다", () => {
+    const M = affine(10, 5, 0, 1, [5, 0, 0]);
+    expect(detectLayout(colMajor(M))).toBe("col");
+    expect(detectLayout(rowMajor(M))).toBe("row");
+    const N = affine(10, 5, 0, 1, [0, 5, 0]);
+    expect(detectLayout(colMajor(N))).toBe("col");
+    expect(detectLayout(rowMajor(N))).toBe("row");
   });
 
   it("이동이 0이면 두 배치가 구별되지 않으므로 null", () => {
@@ -125,6 +161,52 @@ describe("at", () => {
         expect(at(row, r, c, "row")).toBe(M[r][c]);
       }
     }
+  });
+});
+
+describe("decomposeRaw (부호 곱하기 전 규약 각)", () => {
+  it.each(POSES)("손으로 정한 yaw $yaw · pitch $pitch · roll $roll 을 그대로 돌려준다", (p) => {
+    const M = affine(p.yaw, p.pitch, p.roll, p.scale, p.t);
+    for (const [data, layout] of [
+      [colMajor(M), "col"],
+      [rowMajor(M), "row"],
+    ] as const) {
+      const d = decomposeRaw(data, layout)!;
+      expect(d.yaw).toBeCloseTo(p.yaw, 9);
+      expect(d.pitch).toBeCloseTo(p.pitch, 9);
+      expect(d.roll).toBeCloseTo(p.roll, 9);
+      expect(d.scale).toBeCloseTo(p.scale, 9);
+    }
+  });
+
+  it("yaw 20° 만 있는 행렬: yaw 20, pitch 0, roll 0 (손 계산: R02 = sin20°, R22 = cos20°)", () => {
+    const c = Math.cos(deg(20));
+    const s = Math.sin(deg(20));
+    const M = [
+      [c, 0, s, 1],
+      [0, 1, 0, 2],
+      [-s, 0, c, -40],
+      [0, 0, 0, 1],
+    ];
+    const d = decomposeRaw(colMajor(M), "col")!;
+    expect(d.yaw).toBeCloseTo(20, 12);
+    expect(d.pitch).toBeCloseTo(0, 12);
+    expect(d.roll).toBeCloseTo(0, 12);
+  });
+
+  it("decompose 는 decomposeRaw 에 SIGN 을 곱한 값", () => {
+    const M = affine(20, -10, 5, 1, [3.5, 1.25, -52]);
+    const raw = decomposeRaw(colMajor(M), "col")!;
+    const signed = decompose(colMajor(M), "col")!;
+    expect(signed.yaw).toBe(YAW_SIGN * raw.yaw);
+    expect(signed.pitch).toBe(PITCH_SIGN * raw.pitch);
+    expect(signed.roll).toBe(ROLL_SIGN * raw.roll);
+    expect(signed.t).toEqual(raw.t);
+  });
+
+  it("잘못된 입력은 null", () => {
+    expect(decomposeRaw([1, 2, 3], "col")).toBeNull();
+    expect(decomposeRaw(colMajor(affine(0, 0, 0, 1, [0, 0, -40])), "diag" as never)).toBeNull();
   });
 });
 
@@ -168,17 +250,17 @@ describe("decompose", () => {
       [0, 1, 0, -40],
       [0, 0, 0, 1],
     ];
-    const d = decompose(colMajor(M), "col")!;
+    const d = decomposeRaw(colMajor(M), "col")!;
     expect(Number.isNaN(d.pitch)).toBe(false);
-    expect(d.pitch).toBeCloseTo(PITCH_SIGN * 90, 9);
+    expect(d.pitch).toBeCloseTo(90, 9);
     expect(Number.isFinite(d.yaw)).toBe(true);
     expect(Number.isFinite(d.roll)).toBe(true);
 
     // 반대쪽 끝도.
     M[1][2] = 1 + 1e-12;
-    const e = decompose(colMajor(M), "col")!;
+    const e = decomposeRaw(colMajor(M), "col")!;
     expect(Number.isNaN(e.pitch)).toBe(false);
-    expect(e.pitch).toBeCloseTo(PITCH_SIGN * -90, 9);
+    expect(e.pitch).toBeCloseTo(-90, 9);
   });
 
   it("행 우선 데이터를 열 우선으로 잘못 읽으면 값이 달라진다", () => {

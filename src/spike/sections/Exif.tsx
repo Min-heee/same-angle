@@ -16,7 +16,8 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import type { JsonValue } from "@/core/report";
 import { sampleToJson } from "../compare";
-import { summarizeResult, useSpike } from "../context";
+import { useSpike } from "../context";
+import { summarizeResult } from "../sample";
 import s from "../spike.module.css";
 import { Json, Section } from "../ui";
 import { errText, fmt } from "../util";

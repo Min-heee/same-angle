@@ -38,3 +38,24 @@ export function wrapDeg(d: number): number {
 export function angleDiffDeg(a: number, b: number): number {
   return wrapDeg(a - b);
 }
+
+/**
+ * 각도의 원형 평균(도). atan2(Σsin, Σcos).
+ *
+ * 곧게 든 폰이 ±180° 근처로 나오는 기기에서는 표본이 179°·−179° 로 갈라져 산술 평균이 0°
+ * ("완벽하게 곧음")가 된다. 원형 평균은 180° 를 준다. 비유한 값이 섞이면 예외(stats 와 같은 원칙),
+ * 빈 배열이나 방향이 상쇄돼 정할 수 없으면(합 벡터 길이 ≈ 0) null.
+ */
+export function circularMeanDeg(xs: readonly number[]): number | null {
+  if (xs.length === 0) return null;
+  let s = 0;
+  let c = 0;
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
+    if (typeof x !== "number" || !Number.isFinite(x)) throw new RangeError(`표본 ${i}번이 유한한 수가 아닙니다.`);
+    s += Math.sin(x / RAD2DEG);
+    c += Math.cos(x / RAD2DEG);
+  }
+  if (Math.hypot(s, c) / xs.length < 1e-9) return null;
+  return wrapDeg(Math.atan2(s, c) * RAD2DEG);
+}

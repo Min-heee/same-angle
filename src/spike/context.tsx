@@ -21,8 +21,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { faceBox, type FaceBox } from "@/core/face";
-import { decompose, detectLayout, type Decomposed, type MatrixLayout } from "@/core/matrix";
 import {
   SECTION_KEYS,
   type FixtureRecord,
@@ -33,32 +31,14 @@ import {
 import { median, percentile } from "@/core/stats";
 import { beep, type BeepKind } from "./beep";
 import { loadFaceLandmarker, type Delegate, type LoadedLandmarker } from "./engine";
+import { toSample, type FrameSample } from "./sample";
 import { nextTimestamp } from "./timestamp";
 import { errText } from "./util";
-
-/** 경계 접촉 여백: 프레임 짧은 변의 2%. [추론] 초깃값, H2 문턱은 D1 뒤에 정한다. */
-export const EDGE_MARGIN_FRAC = 0.02;
 
 /** 오버레이에 찍는 점: 코끝 1, 눈꼬리 33·263, 턱 152, 이마 10, 입꼬리 61·291. */
 export const OVERLAY_POINTS = [1, 33, 263, 152, 10, 61, 291] as const;
 /** visibility 가 실제로 채워지는지 볼 점. */
 export const VISIBILITY_POINTS = [1, 33, 263] as const;
-
-export interface FrameSample {
-  /** 추론 시작 시각(performance.now). */
-  t: number;
-  inferMs: number;
-  /** 직전 추론 시작과의 간격. 첫 프레임은 null. */
-  intervalMs: number | null;
-  faces: number;
-  /** 첫 얼굴의 행렬(16개). 없으면 null. */
-  matrix: number[] | null;
-  layout: MatrixLayout | null;
-  dec: Decomposed | null;
-  box: FaceBox | null;
-  frameW: number;
-  frameH: number;
-}
 
 export interface LiveStats {
   n: number;
@@ -112,6 +92,8 @@ export interface SpikeApi {
   beep: (k: BeepKind) => void;
 }
 
+export type { FrameSample };
+
 const Ctx = createContext<SpikeApi | null>(null);
 
 export function useSpike(): SpikeApi {
@@ -125,33 +107,6 @@ function initialSections(): Record<SectionKey, SectionResult> {
     SectionKey,
     SectionResult
   >;
-}
-
-/** 첫 얼굴의 결과만 뽑아 표본으로. 랜드마크는 오버레이·픽셀 측정용으로만 ref 에 둔다. */
-function toSample(
-  res: FaceLandmarkerResult,
-  t: number,
-  inferMs: number,
-  intervalMs: number | null,
-  frameW: number,
-  frameH: number,
-): { sample: FrameSample; landmarks: NormalizedLandmark[] | null } {
-  const faces = res.faceLandmarks?.length ?? 0;
-  const lms = faces > 0 ? res.faceLandmarks[0] : null;
-  const raw = res.facialTransformationMatrixes?.[0]?.data;
-  const matrix = raw && raw.length > 0 ? Array.from(raw) : null;
-  const layout = matrix ? detectLayout(matrix) : null;
-  const dec = matrix && layout ? decompose(matrix, layout) : null;
-  const box = lms ? faceBox(lms, frameW, frameH, EDGE_MARGIN_FRAC * Math.min(frameW, frameH)) : null;
-  return {
-    sample: { t, inferMs, intervalMs, faces, matrix, layout, dec, box, frameW, frameH },
-    landmarks: lms,
-  };
-}
-
-/** 결과 하나를 분해까지 마친 요약으로(IMAGE 경로·같은 프레임 비교에서 쓴다). */
-export function summarizeResult(res: FaceLandmarkerResult, frameW: number, frameH: number, inferMs: number) {
-  return toSample(res, 0, inferMs, null, frameW, frameH).sample;
 }
 
 function drawOverlay(canvas: HTMLCanvasElement | null, sample: FrameSample, lms: NormalizedLandmark[] | null) {

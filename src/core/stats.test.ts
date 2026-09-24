@@ -72,6 +72,11 @@ describe("summarize", () => {
     expect(s.max).toBe(9);
   });
 
+  it("최솟값·최댓값이 첫·마지막 자리가 아니어도 찾는다", () => {
+    expect(summarize([5, 1, 9])!.min).toBe(1);
+    expect(summarize([1, 9, 5])!.max).toBe(9);
+  });
+
   it("빈 배열은 null, 한 개면 std 만 null", () => {
     expect(summarize([])).toBeNull();
     expect(summarize([1.5])).toEqual({

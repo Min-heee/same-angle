@@ -5,8 +5,13 @@
  * 그래서 두 가지를 스키마 수준에서 막는다.
  *
  *  1. **얼굴이 담긴 것은 들어가지 않는다.** 이미지·랜드마크 좌표는 필드가 없고, 자유 형식인
- *     섹션 데이터에도 `landmarks`·`image` 같은 키, `data:` URL, 긴 문자열·긴 배열을 거부한다.
+ *     섹션 데이터에도 `landmarks`·`image` 같은 키, `data:` URL, 긴 문자열·긴 배열, base64 로
+ *     보이는 긴 연속 문자를 거부한다. 노드 하나의 길이만 보면 여러 노드로 쪼개 빠져나갈 수
+ *     있으므로(랜드마크를 239점씩 두 배열로, base64 를 2000자씩 300조각으로) 섹션마다
+ *     수 개수·글자 수 총량도 센다.
  *     픽스처는 행렬 16개 숫자와 이름(그리고 그때 분해한 각)뿐이다(TECH-NOTES 5절 실측 픽스처).
+ *     한계: 총량 한도는 "통째로"를 막는다. 몇 점, 작은 조각까지 막는다는 증명은 아니고,
+ *     그 나머지는 "섹션 데이터에는 이름 붙인 요약 숫자만 넣는다"는 점검 페이지 코드가 맡는다.
  *  2. **빠진 값을 채우지 않는다.** 필드 누락·모르는 필드·비유한 수·버전 불일치는 거부한다.
  *     기본값으로 채우면 "재지 않음"과 "0으로 잼"이 구별되지 않는다(PRD F1 과 같은 원칙).
  *     재지 않은 값은 호출하는 쪽이 명시적으로 null 을 넣는다.
@@ -102,10 +107,32 @@ export const FORBIDDEN_KEYS = [
   "bitmap",
 ] as const;
 
-/** 섹션 데이터 한계. 이미지 base64(수십 KB)·랜드마크 478점을 통째로 못 넣게 하는 크기. */
+/** 섹션 데이터의 노드 하나 한계. 이미지 base64(수십 KB)·랜드마크 478점을 한 노드에 못 넣게 하는 크기. */
 export const MAX_STRING_LENGTH = 2000;
 export const MAX_ARRAY_LENGTH = 300;
 export const MAX_DEPTH = 8;
+
+/**
+ * 섹션 하나(reason + data)의 총량 한계. 노드 한계는 쪼개면 빠져나가므로 합계로 다시 막는다.
+ *
+ *  - 수 900개: 얼굴 랜드마크 478점은 x·y 만 넣어도 956개라 들어가지 않는다. 점검 페이지에서
+ *    수가 가장 많은 섹션(흔들림 기록 10회 ≈ 760개)은 들어간다. 섹션의 보관 개수를 늘리면
+ *    이 한도를 먼저 확인한다(내보내기가 통째로 막힌다).
+ *  - 글자 24,000자(키 이름 포함): 수백 KB 짜리 사진 base64 는 들어가지 않는다. 가장 긴
+ *    섹션(카메라 시도 기록 20건 × 오류 문장 400자 + 설정)은 들어간다.
+ */
+export const MAX_SECTION_NUMBERS = 900;
+export const MAX_SECTION_CHARS = 24_000;
+
+/**
+ * base64 알파벳(영숫자 + / - _ =)이 이만큼 이어지면 거부한다. 사람이 읽는 문자열(오류 문장·
+ * userAgent·URL)은 공백이나 점·쌍점에서 끊기므로 이 길이가 나오지 않는다.
+ */
+export const MAX_BASE64_RUN = 256;
+
+/** 픽스처 개수 한계. 이름은 6개지만 같은 이름을 여러 번 남길 여지를 둔다. */
+export const MAX_FIXTURES = 60;
+const BASE64_RUN = new RegExp(`[A-Za-z0-9+/=_-]{${MAX_BASE64_RUN},}`);
 
 export class ReportValidationError extends Error {
   readonly errors: string[];
@@ -155,39 +182,60 @@ function checkNullableBoolean(v: unknown, path: string, errors: Errors) {
   if (v !== null && typeof v !== "boolean") errors.push(`${path}: true/false/null 이 아님`);
 }
 
-/** 자유 형식 JSON 값 검사: 유한 수·금지 키·data URL·길이·깊이. */
-function checkJson(v: unknown, path: string, depth: number, errors: Errors): void {
+/** 섹션 하나를 검사하는 동안 쌓는 총량. */
+interface Budget {
+  numbers: number;
+  chars: number;
+}
+
+const newBudget = (): Budget => ({ numbers: 0, chars: 0 });
+
+/** 자유 형식 JSON 값 검사: 유한 수·금지 키·data URL·base64 연속·길이·깊이, 그리고 총량 누적. */
+function checkJson(v: unknown, path: string, depth: number, errors: Errors, budget: Budget): void {
   if (depth > MAX_DEPTH) {
     errors.push(`${path}: 너무 깊음(>${MAX_DEPTH})`);
     return;
   }
   if (v === null || typeof v === "boolean") return;
   if (typeof v === "number") {
+    budget.numbers++;
     if (!Number.isFinite(v)) errors.push(`${path}: 유한한 수가 아님`);
     return;
   }
   if (typeof v === "string") {
+    budget.chars += v.length;
     if (v.length > MAX_STRING_LENGTH) errors.push(`${path}: 문자열이 너무 김(${v.length})`);
     if (/^\s*data:/i.test(v)) errors.push(`${path}: data: URL 은 넣을 수 없음`);
+    if (BASE64_RUN.test(v)) errors.push(`${path}: base64 로 보이는 연속 문자(${MAX_BASE64_RUN}자 이상)`);
     return;
   }
   if (Array.isArray(v)) {
     if (v.length > MAX_ARRAY_LENGTH) errors.push(`${path}: 배열이 너무 김(${v.length})`);
-    v.forEach((x, i) => checkJson(x, `${path}[${i}]`, depth + 1, errors));
+    v.forEach((x, i) => checkJson(x, `${path}[${i}]`, depth + 1, errors, budget));
     return;
   }
   if (isPlainObject(v)) {
     for (const [k, x] of Object.entries(v)) {
+      budget.chars += k.length;
       if ((FORBIDDEN_KEYS as readonly string[]).includes(k.toLowerCase())) {
         errors.push(`${path}.${k}: 이미지·랜드마크 키는 넣을 수 없음`);
         continue;
       }
-      checkJson(x, `${path}.${k}`, depth + 1, errors);
+      checkJson(x, `${path}.${k}`, depth + 1, errors, budget);
     }
     return;
   }
   // undefined·함수·Date·Map 등은 JSON 으로 왕복하지 않는다.
   errors.push(`${path}: JSON 값이 아님(${v === undefined ? "undefined" : typeof v})`);
+}
+
+function checkBudget(budget: Budget, path: string, errors: Errors) {
+  if (budget.numbers > MAX_SECTION_NUMBERS) {
+    errors.push(`${path}: 수가 너무 많음(${budget.numbers} > ${MAX_SECTION_NUMBERS})`);
+  }
+  if (budget.chars > MAX_SECTION_CHARS) {
+    errors.push(`${path}: 글자가 너무 많음(${budget.chars} > ${MAX_SECTION_CHARS})`);
+  }
 }
 
 function checkSection(v: unknown, path: string, errors: Errors) {
@@ -200,8 +248,10 @@ function checkSection(v: unknown, path: string, errors: Errors) {
     errors.push(`${path}.status: ${SECTION_STATUSES.join("/")} 중 하나가 아님`);
   }
   if (v.reason !== null && typeof v.reason !== "string") errors.push(`${path}.reason: 문자열/null 이 아님`);
-  if (typeof v.reason === "string") checkJson(v.reason, `${path}.reason`, 1, errors);
-  if ("data" in v) checkJson(v.data, `${path}.data`, 1, errors);
+  const budget = newBudget();
+  if (typeof v.reason === "string") checkJson(v.reason, `${path}.reason`, 1, errors, budget);
+  if ("data" in v) checkJson(v.data, `${path}.data`, 1, errors, budget);
+  checkBudget(budget, path, errors);
 }
 
 function checkFixture(v: unknown, path: string, errors: Errors) {
@@ -257,7 +307,7 @@ function collectErrors(x: unknown): Errors {
     const d = x.device;
     checkKeys(d, ["userAgent", "screenWidth", "screenHeight", "devicePixelRatio"], "report.device", errors);
     if ("userAgent" in d && checkString(d.userAgent, "report.device.userAgent", errors)) {
-      checkJson(d.userAgent, "report.device.userAgent", 1, errors);
+      checkJson(d.userAgent, "report.device.userAgent", 1, errors, newBudget());
     }
     for (const k of ["screenWidth", "screenHeight", "devicePixelRatio"]) {
       if (k in d) checkFiniteNumber(d[k], `report.device.${k}`, errors);
@@ -276,7 +326,7 @@ function collectErrors(x: unknown): Errors {
   if (!Array.isArray(x.fixtures)) {
     if ("fixtures" in x) errors.push("report.fixtures: 배열이 아님");
   } else {
-    if (x.fixtures.length > 60) errors.push(`report.fixtures: 너무 많음(${x.fixtures.length})`);
+    if (x.fixtures.length > MAX_FIXTURES) errors.push(`report.fixtures: 너무 많음(${x.fixtures.length})`);
     x.fixtures.forEach((f, i) => checkFixture(f, `report.fixtures[${i}]`, errors));
   }
 
@@ -302,22 +352,30 @@ export function validateReport(x: unknown): ValidationResult {
 export type ReportInput = Omit<Report, "kind" | "version">;
 
 /**
- * 보고서를 만든다. kind·version 만 붙이고 나머지는 받은 그대로 쓴 뒤 검사한다.
+ * 보고서를 만든다. kind·version 을 앞에 붙이고 받은 필드를 **펼쳐** 쓴 뒤 검사한다.
+ * 키를 하나씩 옮겨 적지 않는 이유: 그러면 입력에서 빠진 필드가 "값이 undefined 인 필드"로
+ * 바뀌어, 같은 누락을 validateReport 는 "없음"으로, buildReport 는 형 오류로 보고한다.
+ * 펼치면 누락이 누락으로 남는다. 입력에 kind·version 이 섞여 들어오면 그 값이 검사를 받는다.
  * 검사에 걸리면 ReportValidationError. 통과한 보고서는 JSON 문자열로 왕복해도 같다.
  */
 export function buildReport(input: ReportInput): Report {
-  const report = {
-    kind: REPORT_KIND,
-    version: REPORT_VERSION,
-    createdAt: input.createdAt,
-    device: input.device,
-    sections: input.sections,
-    fixtures: input.fixtures,
-    manualChecks: input.manualChecks,
-  };
+  const report = { kind: REPORT_KIND, version: REPORT_VERSION, ...input };
   const result = validateReport(report);
   if (!result.ok) throw new ReportValidationError(result.errors);
   return result.report;
+}
+
+/**
+ * 검사 오류 문구에서 문제가 난 섹션 키를 뽑는다(점검 페이지의 "문제 섹션만 비우고 내보내기"용).
+ * 섹션 밖(기기 정보·픽스처·수동 확인)의 오류는 여기에 나오지 않는다 — 비워서 고칠 수 없기 때문이다.
+ */
+export function failingSectionKeys(errors: readonly string[]): SectionKey[] {
+  const out = new Set<SectionKey>();
+  for (const e of errors) {
+    const m = /^report\.sections\.([A-Za-z]+)/.exec(e);
+    if (m && (SECTION_KEYS as readonly string[]).includes(m[1])) out.add(m[1] as SectionKey);
+  }
+  return SECTION_KEYS.filter((k) => out.has(k));
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
