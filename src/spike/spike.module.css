@@ -222,6 +222,15 @@
   word-break: break-all;
 }
 
+.okNote {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--ok-wash);
+  color: var(--ok);
+  font-size: 0.85rem;
+}
+
 .note {
   margin-top: 8px;
   padding: 8px 10px;
