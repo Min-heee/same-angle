@@ -29,8 +29,10 @@ interface LoadRow {
   ok: boolean;
   error: string | null;
   importMs: number | null;
-  filesetMs: number | null;
-  createMs: number | null;
+  /** SIMD 탐지만(파일을 받지 않는다). */
+  simdCheckMs: number | null;
+  /** WASM(약 12MB)·모델(약 3.6MB) 받기 + 컴파일 + 초기화. 첫 로드의 통신 시간은 전부 여기 든다. */
+  wasmModelInitMs: number | null;
   totalMs: number | null;
 }
 
@@ -138,8 +140,8 @@ export function FaceSection() {
             ok: true,
             error: null,
             importMs: num(l.timings.importMs, 1),
-            filesetMs: num(l.timings.filesetMs, 1),
-            createMs: num(l.timings.createMs, 1),
+            simdCheckMs: num(l.timings.simdCheckMs, 1),
+            wasmModelInitMs: num(l.timings.wasmModelInitMs, 1),
             totalMs: num(l.timings.totalMs, 1),
           },
           20,
@@ -152,7 +154,7 @@ export function FaceSection() {
       setLoads((p) =>
         pushCapped(
           p,
-          { delegate, numFaces, ok: false, error: errText(e), importMs: null, filesetMs: null, createMs: null, totalMs: null },
+          { delegate, numFaces, ok: false, error: errText(e), importMs: null, simdCheckMs: null, wasmModelInitMs: null, totalMs: null },
           20,
         ),
       );
@@ -202,16 +204,22 @@ export function FaceSection() {
       reason={sec.reason}
     >
       <div className={s.seg}>
-        {(["CPU", "GPU"] as const).map((x) => (
-          <label key={x}>
-            <input type="radio" name="delegate" checked={delegate === x} onChange={() => setDelegate(x)} /> {x}
-          </label>
-        ))}
-        {[1, 2].map((n) => (
-          <label key={n}>
-            <input type="radio" name="numFaces" checked={numFaces === n} onChange={() => setNumFaces(n)} /> {n}명
-          </label>
-        ))}
+        <fieldset className={s.fieldset}>
+          <legend className={s.visuallyHidden}>추론 방식</legend>
+          {(["CPU", "GPU"] as const).map((x) => (
+            <label key={x}>
+              <input type="radio" name="delegate" checked={delegate === x} onChange={() => setDelegate(x)} /> {x}
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className={s.fieldset}>
+          <legend className={s.visuallyHidden}>최대 인원</legend>
+          {[1, 2].map((n) => (
+            <label key={n}>
+              <input type="radio" name="numFaces" checked={numFaces === n} onChange={() => setNumFaces(n)} /> {n}명
+            </label>
+          ))}
+        </fieldset>
       </div>
 
       <div className={s.row}>
@@ -229,6 +237,15 @@ export function FaceSection() {
         )}
       </div>
       {locked ? <p className={s.ref} style={{ marginTop: 6 }}>{recording} 기록 중에는 모델·추론 버튼을 막습니다.</p> : null}
+      {!loopRunning && !locked && (!stream || !engine) ? (
+        <p className={s.how} role="status">
+          {!stream && !engine
+            ? "[추론 시작]은 1번에서 카메라를 켜고 여기서 [모델 불러오기]를 한 뒤에 켜집니다."
+            : !stream
+              ? "1번에서 카메라를 먼저 켜세요. 켜면 [추론 시작]을 누를 수 있습니다."
+              : "먼저 [모델 불러오기]를 누르세요."}
+        </p>
+      ) : null}
       <div className={s.row}>
         <select
           className={s.select}
@@ -290,7 +307,9 @@ export function FaceSection() {
             {loads.map((l, i) => (
               <li key={i}>
                 {l.delegate}·{l.numFaces}명 ·{" "}
-                {l.ok ? `총 ${l.totalMs}ms (import ${l.importMs} / 파일셋 ${l.filesetMs} / 생성 ${l.createMs})` : `실패 ${l.error}`}
+                {l.ok
+                  ? `총 ${l.totalMs}ms (import ${l.importMs} / SIMD 탐지 ${l.simdCheckMs} / WASM·모델 받고 초기화 ${l.wasmModelInitMs})`
+                  : `실패 ${l.error}`}
               </li>
             ))}
           </ul>

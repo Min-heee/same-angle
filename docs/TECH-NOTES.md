@@ -125,6 +125,8 @@ PRD 4절 표의 완료 기준을 구현·테스트 수준으로 적은 원본입
 | DeviceMotion·DeviceOrientation 권한과 세로 상태 안정성 | 버튼 한 번으로 허락 | 폰 기울기 지표를 기록 전용으로 |
 | 웹 인스펙터 네트워크 기록, CSP 동작 | 허용 목록 밖 요청 0건. `odml.pa.googleapis.com` 요청이 기록에 없음(가드가 보내기 전에 막아 점검 11번 "가드가 막은 요청"에만 잡힘), POST/PUT 0건. 11번 CSP 강제 시험이 `connect-src` enforce 위반으로 막힘(0번 위반 목록에도 enforce 로 기록) | CSP 수정. 강제 시험이 막히지 않으면 가드만 남은 것이므로 헤더 전달부터 확인 |
 
+**초기화 시간 읽는 법.** 점검 2번 불러오기 기록의 `simdCheckMs`(`FilesetResolver.forVisionTasks`)는 SIMD 지원만 탐지하고 파일을 받지 않습니다. WASM(약 12MB) 받기·컴파일과 모델(약 3.6MB) 받기는 전부 `wasmModelInitMs`(`createFromOptions`)에 들어갑니다(`vision_bundle.mjs`). 그래서 첫 로드(통신 포함)와 두 번째 로드(캐시)를 나눠 적고, 이 단계의 제한 시간은 60초로 둡니다.
+
 **그 밖의 미확인.** IMAGE 모드의 EXIF 회전 반영(안전한 경로는 `createImageBitmap`), FaceLandmarker와 캔버스의 메모리 합, 아이폰에서 `getImageData`와 지표 계산 비용, takePhoto의 플래시 동작(`fillLightMode`), 홈 화면 웹앱과 사파리 탭의 저장소 분리와 standalone 모드의 카메라 권한 재요청(WebKit 버그 181849·215884, F12를 켤 때만 해당), 얼굴이 중앙을 벗어났을 때의 각도 편향 크기, 음영 합성 머리가 픽셀 지표 시연에 충분한지(부족하면 시연은 픽셀 지표를 보여 주지 않는다고 표시).
 
 ## 7. 규제 조사 메모

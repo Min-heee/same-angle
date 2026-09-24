@@ -29,9 +29,9 @@ export type RunningMode = "VIDEO" | "IMAGE";
 export interface LoadTimings {
   importMs: number;
   /** SIMD 탐지(forVisionTasks). 파일을 받지 않는다. */
-  filesetMs: number;
+  simdCheckMs: number;
   /** WASM(약 12MB)·모델(약 3.6MB) 받기 + WASM 컴파일 + 그래프 초기화(createFromOptions). */
-  createMs: number;
+  wasmModelInitMs: number;
   totalMs: number;
 }
 
@@ -157,6 +157,6 @@ export async function loadFaceLandmarker(opts: {
     delegate: opts.delegate,
     numFaces: opts.numFaces,
     runningMode: opts.runningMode,
-    timings: { importMs: t1 - t0, filesetMs: t2 - t1, createMs: t3 - t2, totalMs: t3 - t0 },
+    timings: { importMs: t1 - t0, simdCheckMs: t2 - t1, wasmModelInitMs: t3 - t2, totalMs: t3 - t0 },
   };
 }
