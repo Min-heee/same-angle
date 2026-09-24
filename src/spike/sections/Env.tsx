@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { JsonValue } from "@/core/report";
+import { audioState, beep, unlockAudio, type AudioState } from "../beep";
 import { useSpike } from "../context";
 import s from "../spike.module.css";
 import { Json, KV, Section } from "../ui";
@@ -56,6 +57,10 @@ export function EnvSection() {
   const sec = sections.env;
   const [env, setEnv] = useState<ReturnType<typeof collectEnv> | null>(null);
   const [violations, setViolations] = useState<Violation[]>([]);
+  // 소리는 한 손 점검의 유일한 신호다(beep.ts). 켜졌는지(running)와 무음 스위치를 무시하는
+  // 세션(playback)인지를 보고서에 남겨, "삐 소리를 못 들었다"를 D1 뒤에 가릴 수 있게 한다.
+  const [audio, setAudio] = useState<AudioState | null>(null);
+  const [soundTested, setSoundTested] = useState(false);
 
   const refresh = useCallback(() => {
     try {
@@ -63,10 +68,10 @@ export function EnvSection() {
       const v = readViolations();
       setEnv(e);
       setViolations(v);
+      setAudio(audioState());
       setSection("env", {
         status: "done",
         reason: e.isSecureContext ? null : "보안 컨텍스트가 아닙니다(HTTPS 아님) — 카메라가 열리지 않습니다.",
-        data: { ...(toJson(e) as { [k: string]: JsonValue }), cspViolations: toJson(v) },
       });
     } catch (err) {
       setSection("env", { status: "failed", reason: errText(err) });
@@ -76,20 +81,50 @@ export function EnvSection() {
   useEffect(() => {
     refresh();
     // 위반은 페이지를 쓰는 동안 계속 쌓인다(모델·WASM 로드, 공유 등). 몇 초마다 다시 읽는다.
+    // 오디오 상태도 전화·다른 앱 소리로 바뀌므로(interrupted) 같이 다시 읽는다.
     const id = setInterval(() => {
       const v = readViolations();
       setViolations((prev) => (prev.length === v.length ? prev : v));
+      const a = audioState();
+      setAudio((prev) => (prev && prev.context === a.context && prev.session === a.session ? prev : a));
     }, 3000);
     return () => clearInterval(id);
   }, [refresh]);
 
-  // 새 위반이 들어오면 보고서 데이터도 갱신한다.
+  // 환경·위반·소리 상태가 바뀌면 보고서 데이터도 갱신한다.
   useEffect(() => {
     if (!env) return;
     setSection("env", {
-      data: { ...(toJson(env) as { [k: string]: JsonValue }), cspViolations: toJson(violations) },
+      data: {
+        ...(toJson(env) as { [k: string]: JsonValue }),
+        cspViolations: toJson(violations),
+        audio: audio ? { context: audio.context, session: audio.session, soundTested } : null,
+      },
     });
-  }, [env, violations, setSection]);
+  }, [env, violations, audio, soundTested, setSection]);
+
+  /** 클릭 핸들러 안에서 잠금 해제 → 소리. 잠시 뒤 상태를 다시 읽는다(resume 은 비동기). */
+  const testSound = () => {
+    unlockAudio();
+    beep("start");
+    setSoundTested(true);
+    setTimeout(() => setAudio(audioState()), 400);
+  };
+
+  const audioLabel = (a: AudioState | null) => {
+    if (!a) return "—";
+    const ctx =
+      a.context === "running"
+        ? "켜짐"
+        : a.context === "none"
+          ? "아직 안 만듦(화면을 한 번 누르세요)"
+          : a.context === "unsupported"
+            ? "지원 안 함"
+            : `꺼짐(${a.context})`;
+    const session =
+      a.session === null ? "무음 스위치를 따름" : a.session === "playback" ? "무음 스위치 무시(playback)" : a.session;
+    return `${ctx} · ${session}`;
+  };
 
   const f = env?.features;
   const yn = (b: boolean | undefined) => (b === undefined ? "—" : b ? "있음" : "없음");
@@ -117,9 +152,19 @@ export function EnvSection() {
             ["createImageBitmap", yn(f.createImageBitmap)],
             ["WebGL2", yn(f.webgl2)],
             ["CSP 위반(관찰 + 강제)", `${violations.length}건`],
+            ["소리", audioLabel(audio)],
           ]}
         />
       ) : null}
+      <div className={s.row}>
+        <button className={s.btn} onClick={testSound}>
+          소리 시험
+        </button>
+      </div>
+      <p className={s.ref} style={{ marginTop: 6 }}>
+        높은 삐 소리가 한 번 나야 합니다. 안 들리면 옆면 무음 스위치를 끄고 음량을 올린 뒤 다시 누르세요. 소리가 &lsquo;무음 스위치를
+        따름&rsquo;이면 무음 모드에서는 3·4·8번의 삐 소리가 나지 않습니다.
+      </p>
       {violations.length > 0 ? (
         <ul className={s.list}>
           {violations.map((v, i) => (

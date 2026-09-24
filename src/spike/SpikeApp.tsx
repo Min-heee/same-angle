@@ -95,10 +95,15 @@ export default function SpikeApp() {
   }, []);
 
   useEffect(() => {
-    // iOS 는 사용자 제스처 안에서만 오디오를 연다. 첫 탭에서 한 번.
-    const onFirst = () => unlockAudio();
-    document.addEventListener("pointerdown", onFirst, { once: true });
-    return () => document.removeEventListener("pointerdown", onFirst);
+    // iOS 는 활성화 이벤트(touchend·click·keydown) 안에서만 오디오를 연다. 터치의 pointerdown 은
+    // 활성화가 아니고, 긴 페이지의 첫 터치는 대개 스크롤이다. 그래서 한 번(once)이 아니라 매번
+    // 부른다(이미 켜져 있으면 상태만 확인하고 끝난다). 캡처 단계라 버튼 핸들러의 beep 보다 먼저 돈다.
+    const events = ["touchend", "click", "keydown"] as const;
+    const onGesture = () => unlockAudio();
+    for (const e of events) document.addEventListener(e, onGesture, { capture: true, passive: true });
+    return () => {
+      for (const e of events) document.removeEventListener(e, onGesture, { capture: true });
+    };
   }, []);
 
   return (
@@ -110,6 +115,10 @@ export default function SpikeApp() {
             같은각도를 만들기 전에 아이폰 사파리에서 카메라·얼굴 모델·센서·공유가 실제로 어떻게 동작하는지 잽니다. 위에서부터 차례로
             돌리고, 마지막 12번에서 결과 JSON 을 내보내세요. 각 섹션의 번호는 <code>docs/TECH-NOTES.md</code> 6절 체크리스트와
             이어집니다.
+          </p>
+          <p className={s.lede}>
+            <strong>무음 모드(옆면 스위치)를 끄고 소리를 켜 두세요.</strong> 후면 카메라로 찍는 동안에는 화면을 볼 수 없어
+            카운트다운과 기록 시작·끝을 소리로 알립니다. 0번 [소리 시험]으로 먼저 확인하세요.
           </p>
           <p className={s.promise}>
             카메라 영상과 고른 사진은 <strong>이 기기 안에서만</strong> 처리하고 어디로도 보내지 않습니다. 이 페이지가 네트워크로
