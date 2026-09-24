@@ -41,7 +41,7 @@ npm run preview      # 빌드한 out/ 을 vercel.json 과 같은 헤더로 띄�
 - 서버가 없습니다. Next.js 정적 내보내기(`out/`)만 배포합니다.
 - MediaPipe WASM 은 `@mediapipe/tasks-vision` 1.0.1 패키지에서 `public/mediapipe/wasm/` 으로 빌드 때 복사해 **같은 출처에서** 내려보냅니다(`scripts/copy-wasm.mjs`, 생성물이라 커밋하지 않음).
 - 얼굴 랜드마크 모델 파일(`face_landmarker.task`)은 재배포 조건이 불명확해 커밋하지 않고 **Google 서버**(`storage.googleapis.com`)에서 받습니다. 이때 기기의 IP 가 Google 로 전달됩니다.
-- **MediaPipe 사용 통계.** `@mediapipe/tasks-vision` 1.0.1 은 얼굴 모델 엔진을 만들 때마다 사용 통계 로거를 만들고, 60초마다·엔진을 닫을 때 `https://odml.pa.googleapis.com/v1/log` 로 POST 합니다(플랫폼·라이브러리 버전·과제 종류·실행 모드·초기화/추론 시간. 끄는 옵션 없음). 패키지 README 의 Privacy Notice 는 이 전송을 알리고 동의를 받을 책임을 앱 개발자에게 둡니다. 이 앱은 그 요청을 **보내기 전에 막습니다**: 배포본은 강제 CSP `connect-src 'self' https://storage.googleapis.com` 이, 모든 환경(헤더 없는 `npm run dev` 포함)은 `src/spike/netguard.ts` 의 fetch 가드가 막습니다. 막힌 횟수는 점검 페이지 11번에 남습니다. 사진·영상은 이 통계에 들어가지 않습니다(패키지 README).
+- **MediaPipe 사용 통계.** `@mediapipe/tasks-vision` 1.0.1 은 얼굴 모델 엔진을 만들 때마다 사용 통계 로거를 만들고, 60초마다·엔진을 닫을 때 `https://odml.pa.googleapis.com/v1/log` 로 POST 합니다(플랫폼·라이브러리 버전·과제 종류·실행 모드·초기화/추론 시간. 끄는 옵션 없음). 패키지 README 의 Privacy Notice 는 이 전송을 알리고 동의를 받을 책임을 앱 개발자에게 둡니다. 이 앱은 그 요청을 **보내기 전에 막습니다**: 배포본은 강제 CSP `connect-src 'self' https://storage.googleapis.com/mediapipe-models/` 가, 모든 환경(헤더 없는 `npm run dev` 포함)은 `src/spike/netguard.ts` 의 fetch 가드가 막습니다. 막힌 횟수는 점검 페이지 11번에 남습니다. 사진·영상은 이 통계에 들어가지 않습니다(패키지 README).
 - 사진이 기기를 떠나는 길은 사용자가 누르는 공유·다운로드뿐이고, 그 뒤(사진 앱, 클라우드 동기화, 메신저)는 앱이 통제하지 못합니다.
 - 이 약속은 아직 **실기기 네트워크 기록으로 확인하지 않았습니다.** 확인은 아이폰을 맥에 연결한 사파리 웹 인스펙터의 네트워크 기록(허용 목록 밖 요청·`odml.pa.googleapis.com` 요청·POST/PUT 0건)으로 합니다. 점검 페이지 11번의 출처 목록(Resource Timing)과 가드 기록은 보조 자료이지 증명이 아닙니다.
 
@@ -49,7 +49,8 @@ npm run preview      # 빌드한 out/ 을 vercel.json 과 같은 헤더로 띄�
 
 `vercel.json` 은 모든 경로에 헤더 두 개를 붙입니다.
 
-- `Content-Security-Policy`(강제): `connect-src 'self' https://storage.googleapis.com; frame-ancestors 'none'`. MediaPipe 사용 통계처럼 허용 목록 밖으로 가는 fetch 를 브라우저가 보내기 전에 막습니다. `connect-src` 는 점검 대상(WASM·GPU 위임·카메라 스트림·공유 시트)을 막지 않습니다.
+- `Content-Security-Policy`(강제): `connect-src 'self' https://storage.googleapis.com/mediapipe-models/; form-action 'none'; base-uri 'self'; frame-ancestors 'none'`. MediaPipe 사용 통계처럼 허용 목록 밖으로 가는 fetch 를 브라우저가 보내기 전에 막습니다. 원격은 호스트 전체가 아니라 **모델 버킷 경로**까지만 엽니다. `storage.googleapis.com` 은 누구의 버킷에든 업로드를 받는 호스트라, 호스트를 통째로 열면 경계가 되지 않습니다. 이 지시어들은 점검 대상(WASM·GPU 위임·카메라 스트림·공유 시트)을 막지 않습니다(크로미움에서 모델·WASM 로드 확인, 아이폰 사파리는 D1 에서 확인).
+- `Referrer-Policy: no-referrer`: 모델 파일을 받을 때 배포 주소를 Google 에 넘기지 않습니다(IP 는 여전히 전달됩니다).
 - `Content-Security-Policy-Report-Only`(관찰): TECH-NOTES 1절 F10 이 요구하는 `connect-src`·`img-src`·`form-action` 에 `default-src`·`script-src 'wasm-unsafe-eval'`·`worker-src`·`media-src`·`base-uri`·`frame-ancestors` 를 더한 초안입니다. 더한 지시어의 근거는 문서가 아니라 구현 중 판단입니다.
 
 나머지를 관찰로 둔 이유: 아이폰 사파리에서 MediaPipe WASM·GPU 위임·카메라 스트림·공유 시트가 이 정책 아래에서 무엇을 요구하는지 **아직 한 번도 확인하지 못했습니다.** 처음부터 전부 강제하면 점검 자체가 막혀 무엇이 모자랐는지 알 수 없습니다. Report-Only 에서도 브라우저는 위반마다 `securitypolicyviolation` 이벤트를 내므로, 점검 단계에서는 위반 목록을 모으고 정책을 고친 뒤 강제로 바꿉니다(조건은 TECH-NOTES 10절). CSP 문자열은 `src/csp.test.ts` 가 고정합니다.

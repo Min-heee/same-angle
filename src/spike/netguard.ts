@@ -7,7 +7,7 @@
  * "Privacy Notice"). 같은각도의 약속은 "모델 파일 받기 말고는 네트워크로 나가지 않는다"이다.
  *
  * 두 겹으로 막는다.
- *  1. 배포본: vercel.json 의 강제 CSP `connect-src 'self' https://storage.googleapis.com`.
+ *  1. 배포본: vercel.json 의 강제 CSP `connect-src 'self' https://storage.googleapis.com/mediapipe-models/`.
  *  2. 이 가드: `npm run dev` 에는 헤더가 없고, CSP 가 사파리에서 실제로 강제되는지는 D1 전까지
  *     미확인이다. 그래서 window.fetch 를 감싸 허용 목록 밖 요청을 보내기 전에 거부한다.
  *     로거는 fetch 예외를 잡으면 오류 상태로 바꾸고 주기 전송을 스스로 멈춘다(vision_bundle.mjs).
@@ -19,12 +19,22 @@
  * vercel.json 의 connect-src 와 같은지 csp.test.ts 가 확인한다.
  */
 
-/** 자기 출처 말고 허용하는 원격 출처. vercel.json connect-src 와 같아야 한다(csp.test.ts). */
-export const ALLOWED_REMOTE_ORIGINS = ["https://storage.googleapis.com"] as const;
+/**
+ * 자기 출처 말고 허용하는 원격 주소(경로 앞부분까지). vercel.json connect-src 와 같아야 한다(csp.test.ts).
+ *
+ * 출처(https://storage.googleapis.com) 전체가 아니라 모델 버킷 경로까지 좁힌다. 그 호스트는
+ * 누구의 버킷에든 업로드를 받으므로, 출처만 허용하면 "모델 받기만 허용"이 아니라
+ * "Google 저장소 어디로든 보내기 허용"이 된다. CSP 도 같은 경로 출처 식을 쓴다(CSP 2 경로 매칭).
+ */
+export const ALLOWED_REMOTE_PREFIXES = ["https://storage.googleapis.com/mediapipe-models/"] as const;
+
+/** 원격 허용 주소들의 출처(출처 목록 표시용). */
+export const ALLOWED_REMOTE_ORIGINS = ALLOWED_REMOTE_PREFIXES.map((p) => new URL(p).origin);
 
 /**
  * 이 URL 로 fetch 해도 되는가. 상대 경로는 selfOrigin 기준으로 푼다.
  * http(s) 가 아닌 스킴(data:·blob: 등)은 CSP connect-src 'self' 와 같게 막는다.
+ * 원격은 출처가 같고 **정규화한 경로**가 허용 경로로 시작해야 한다(`..` 로 버킷을 빠져나가지 못하게).
  */
 export function isAllowedUrl(url: string, selfOrigin: string): boolean {
   let u: URL;
@@ -34,7 +44,11 @@ export function isAllowedUrl(url: string, selfOrigin: string): boolean {
     return false;
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") return false;
-  return u.origin === selfOrigin || (ALLOWED_REMOTE_ORIGINS as readonly string[]).includes(u.origin);
+  if (u.origin === selfOrigin) return true;
+  return ALLOWED_REMOTE_PREFIXES.some((p) => {
+    const allowed = new URL(p);
+    return u.origin === allowed.origin && u.pathname.startsWith(allowed.pathname);
+  });
 }
 
 /** 보고서에 남기는 차단 기록: 출처·메서드·횟수만(경로·본문·헤더는 남기지 않는다). */

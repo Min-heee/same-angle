@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it, vi } from "vitest";
 import {
   ALLOWED_REMOTE_ORIGINS,
+  ALLOWED_REMOTE_PREFIXES,
   MAX_BLOCKED_KINDS,
   addBlocked,
   blockedRequests,
@@ -19,7 +20,18 @@ describe("isAllowedUrl", () => {
     expect(isAllowedUrl("/mediapipe/wasm/vision_wasm_internal.wasm", SELF)).toBe(true);
     expect(isAllowedUrl(`${SELF}/spike/`, SELF)).toBe(true);
     expect(isAllowedUrl(MODEL, SELF)).toBe(true);
+    expect(ALLOWED_REMOTE_PREFIXES).toEqual(["https://storage.googleapis.com/mediapipe-models/"]);
     expect(ALLOWED_REMOTE_ORIGINS).toEqual(["https://storage.googleapis.com"]);
+  });
+
+  it("모델 서버라도 모델 버킷 밖 경로는 막는다(그 호스트는 아무 버킷에나 업로드를 받는다)", () => {
+    expect(isAllowedUrl("https://storage.googleapis.com/upload/storage/v1/b/any/o", SELF)).toBe(false);
+    expect(isAllowedUrl("https://storage.googleapis.com/some-bucket/x.jpg", SELF)).toBe(false);
+    expect(isAllowedUrl("https://storage.googleapis.com/mediapipe-models", SELF)).toBe(false);
+    expect(isAllowedUrl("https://storage.googleapis.com/mediapipe-models-evil/x", SELF)).toBe(false);
+    // 정규화하면 버킷 밖이다.
+    expect(isAllowedUrl("https://storage.googleapis.com/mediapipe-models/../evil/x", SELF)).toBe(false);
+    expect(isAllowedUrl("https://storage.googleapis.com/mediapipe-models/%2e%2e/evil/x", SELF)).toBe(false);
   });
 
   it("MediaPipe 사용 통계 주소와 그 밖의 출처는 막는다", () => {
