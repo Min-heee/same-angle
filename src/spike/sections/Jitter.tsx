@@ -29,6 +29,12 @@ const VIEWS = [
 ] as const;
 
 export const JITTER_SECONDS = 30;
+/**
+ * 보고서에 남기는 최근 기록 수. 한 번에 수 76개(요약 10지표 × 7 + 개수 6)라 10회 ≈ 760개로
+ * 보고서 섹션 한도(MAX_SECTION_NUMBERS 900) 안이다. 늘리면 내보내기가 막히니 한도부터 본다.
+ * 잡는 방식 2 × 뷰 4 = 8조합에 재시도 두 번 여유.
+ */
+export const JITTER_KEEP = 10;
 
 type Metric = "yaw" | "pitch" | "roll" | "scale" | "tz" | "cx" | "cy" | "intervalMs" | "inferMs" | "shortSideRatio";
 const METRICS: Metric[] = ["yaw", "pitch", "roll", "scale", "tz", "cx", "cy", "intervalMs", "inferMs", "shortSideRatio"];
@@ -123,7 +129,7 @@ export function JitterSection() {
           noDecompose: samples.filter((x) => x.faces === 1 && x.dec === null).length,
           summaries,
         };
-        setResults((p) => [...p, r].slice(-16));
+        setResults((p) => [...p, r].slice(-JITTER_KEEP));
         setSection("jitter", { status: "done", reason: null });
         beep("end");
       } catch (e) {

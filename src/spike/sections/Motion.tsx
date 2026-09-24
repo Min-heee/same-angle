@@ -7,13 +7,15 @@
  * 클릭 핸들러에서 await 보다 먼저, 두 함수를 곧바로 부른다 — 앞의 것을 await 한 뒤 두 번째를
  * 부르면 제스처가 끝난 것으로 보고 거부될 수 있다[추론].
  *
- * 폰 롤은 atan2(gx, gy)(core/motion). 곧게 든 상태가 ±180° 근처로 나오는 기기라면 평균이
- * 망가지므로, 첫 표본 대비 차(감은 값)도 함께 요약한다. 원 성분 gx·gy·gz 도 남긴다.
+ * 폰 롤은 atan2(gx, gy)(core/motion). 곧게 든 상태가 ±180° 근처로 나오는 기기라면 원값을
+ * 그대로 평균·표준편차 내면 179°·−179° 가 섞여 평균 0°, σ 200° 같은 무의미한 값이 된다.
+ * 그래서 원값 요약은 남기지 않는다. 원형 평균(circularMeanDeg)과, 그 평균·첫 표본 대비
+ * 감은 차(−180~180)의 요약만 남긴다. 부호·0점 판단용으로 원 성분 gx·gy·gz 요약도 남긴다.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JsonValue } from "@/core/report";
-import { angleDiffDeg, phoneRollDeg } from "@/core/motion";
+import { angleDiffDeg, circularMeanDeg, phoneRollDeg, relToCircularMeanDeg } from "@/core/motion";
 import { summarize, type Summary } from "@/core/stats";
 import { useSpike } from "../context";
 import s from "../spike.module.css";
@@ -166,6 +168,8 @@ export function MotionSection() {
         const rolls = finite(ms.map((x) => x.roll));
         const first = rolls[0];
         const rel = first === undefined ? [] : rolls.map((r) => angleDiffDeg(r, first));
+        const circMean = circularMeanDeg(rolls);
+        const relMean = relToCircularMeanDeg(rolls) ?? [];
         const dur = (performance.now() - t0) / 1000;
         const r: JsonValue = {
           seconds: RECORD_S,
@@ -173,7 +177,8 @@ export function MotionSection() {
           motionEvents: ms.length,
           orientationEvents: os.length,
           motionHz: num(ms.length / dur, 1),
-          phoneRoll: round(summarize(rolls)),
+          phoneRollCircularMean: num(circMean, 3),
+          phoneRollRelToMean: round(summarize(relMean)),
           phoneRollRelToFirst: round(summarize(rel)),
           gx: round(summarize(finite(ms.map((x) => x.gx)))),
           gy: round(summarize(finite(ms.map((x) => x.gy)))),
@@ -221,10 +226,16 @@ export function MotionSection() {
       {results.length > 0 ? (
         <ul className={s.list}>
           {results.map((r, i) => {
-            const x = r as { phoneRollRelToFirst: { std: number | null } | null; phoneRoll: { median: number } | null; motionHz: number };
+            const x = r as {
+              phoneRollCircularMean: number | null;
+              phoneRollRelToMean: { std: number | null } | null;
+              phoneRollRelToFirst: { std: number | null } | null;
+              motionHz: number;
+            };
             return (
               <li key={i}>
-                롤 중앙 {fmt(x.phoneRoll?.median)}° · 첫 표본 대비 σ {fmt(x.phoneRollRelToFirst?.std, 2)}° · {x.motionHz}Hz
+                롤 원형 평균 {fmt(x.phoneRollCircularMean)}° · 평균 대비 σ {fmt(x.phoneRollRelToMean?.std, 2)}° · 첫 표본 대비 σ{" "}
+                {fmt(x.phoneRollRelToFirst?.std, 2)}° · {x.motionHz}Hz
               </li>
             );
           })}

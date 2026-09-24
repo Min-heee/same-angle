@@ -59,3 +59,14 @@ export function circularMeanDeg(xs: readonly number[]): number | null {
   if (Math.hypot(s, c) / xs.length < 1e-9) return null;
   return wrapDeg(Math.atan2(s, c) * RAD2DEG);
 }
+
+/**
+ * 각 표본을 원형 평균 대비 감은 차(−180, 180] 로 바꾼다. 평균을 정할 수 없으면 null.
+ *
+ * 폰 롤의 흔들림(σ·p95)은 이 값으로 요약한다. 원값을 그대로 요약하면 179°·−179° 가 섞여
+ * 실제 퍼짐 1° 가 σ 200° 로 나온다(점검 페이지 8번 보고서).
+ */
+export function relToCircularMeanDeg(xs: readonly number[]): number[] | null {
+  const m = circularMeanDeg(xs);
+  return m === null ? null : xs.map((x) => angleDiffDeg(x, m));
+}

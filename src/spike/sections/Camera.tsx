@@ -45,6 +45,13 @@ interface ResizeRow {
   orientation: string | null;
 }
 
+/**
+ * 보고서에 남기는 최근 기록 수. 시도 기록은 오류 문장(최대 400자)을 담아 글자 수가 크다.
+ * 20건 + 시작 기록 6건이 보고서 섹션 글자 한도(MAX_SECTION_CHARS 24,000) 안에 들도록 잡았다.
+ */
+const ATTEMPTS_KEEP = 20;
+const STARTS_KEEP = 6;
+
 /** 후보 제약: 앞에서부터 시도해 처음 열리는 것을 쓴다. */
 const CANDIDATES: { label: string; c: MediaTrackConstraints }[] = [
   {
@@ -126,7 +133,7 @@ export function CameraSection() {
         await v.play();
       } catch (e) {
         // autoplay muted playsinline 이면 보통 필요 없지만, 실패하면 이유를 남긴다.
-        setAttempts((p) => pushCapped(p, { label: "video.play()", ok: false, error: errText(e) }, 30));
+        setAttempts((p) => pushCapped(p, { label: "video.play()", ok: false, error: errText(e) }, ATTEMPTS_KEEP));
       }
       setStream(ms);
       const track = ms.getVideoTracks()[0];
@@ -142,7 +149,7 @@ export function CameraSection() {
         if ("groupId" in caps) caps.groupId = shortId(String(caps.groupId));
       }
       setStarts((p) =>
-        pushCapped(p, { how, trackLabel: track?.label ?? "", settings, capabilities: caps, torchOff: torch }, 10),
+        pushCapped(p, { how, trackLabel: track?.label ?? "", settings, capabilities: caps, torchOff: torch }, STARTS_KEEP),
       );
 
       // 권한을 받은 뒤라야 라벨이 채워진다.
@@ -155,7 +162,7 @@ export function CameraSection() {
         const cur = track?.getSettings().deviceId;
         if (cur) setSelected(cur);
       } catch (e) {
-        setAttempts((p) => pushCapped(p, { label: "enumerateDevices", ok: false, error: errText(e) }, 30));
+        setAttempts((p) => pushCapped(p, { label: "enumerateDevices", ok: false, error: errText(e) }, ATTEMPTS_KEEP));
       }
     },
     [videoRef, setStream],
@@ -180,14 +187,14 @@ export function CameraSection() {
     for (const cand of CANDIDATES) {
       try {
         const ms = await navigator.mediaDevices.getUserMedia({ video: cand.c, audio: false });
-        setAttempts((p) => pushCapped(p, { label: cand.label, ok: true, error: null }, 30));
+        setAttempts((p) => pushCapped(p, { label: cand.label, ok: true, error: null }, ATTEMPTS_KEEP));
         await attach(ms, cand.label);
         setSection("camera", { status: "done", reason: null });
         setBusy(false);
         return;
       } catch (e) {
         lastErr = e;
-        setAttempts((p) => pushCapped(p, { label: cand.label, ok: false, error: errText(e) }, 30));
+        setAttempts((p) => pushCapped(p, { label: cand.label, ok: false, error: errText(e) }, ATTEMPTS_KEEP));
         // 권한 거부는 다음 후보로 넘어가도 같은 결과다.
         if (e instanceof DOMException && e.name === "NotAllowedError") break;
       }
@@ -208,11 +215,11 @@ export function CameraSection() {
         video: { deviceId: { exact: selected }, width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
-      setAttempts((p) => pushCapped(p, { label: how, ok: true, error: null }, 30));
+      setAttempts((p) => pushCapped(p, { label: how, ok: true, error: null }, ATTEMPTS_KEEP));
       await attach(ms, how);
       setSection("camera", { status: "done", reason: null });
     } catch (e) {
-      setAttempts((p) => pushCapped(p, { label: how, ok: false, error: errText(e) }, 30));
+      setAttempts((p) => pushCapped(p, { label: how, ok: false, error: errText(e) }, ATTEMPTS_KEEP));
       setSection("camera", { status: "failed", reason: errText(e) });
     }
     setBusy(false);

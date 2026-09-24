@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { angleDiffDeg, circularMeanDeg, phoneRollDeg, wrapDeg } from "./motion";
+import { summarize } from "./stats";
+import { angleDiffDeg, circularMeanDeg, phoneRollDeg, relToCircularMeanDeg, wrapDeg } from "./motion";
 
 describe("phoneRollDeg", () => {
   it("atan2(gx, gy) 를 도로: (0, 9.81) → 0°, (9.81, 9.81) → 45°, (9.81, 0) → 90°", () => {
@@ -57,3 +58,29 @@ describe("circularMeanDeg", () => {
     expect(() => circularMeanDeg([1, Number.NaN])).toThrow(RangeError);
   });
 });
+
+describe("relToCircularMeanDeg", () => {
+  // 곧게 든 폰이 ±180° 근처로 읽히는 기기의 롤 표본. 실제 퍼짐은 1° 안쪽이다.
+  const rolls = [179.5, -179.5, 179.8, -179.9];
+
+  it("원값을 그대로 요약하면 σ 가 200° 를 넘는다(이래서 원값 요약을 보고서에서 뺐다)", () => {
+    expect(summarize(rolls)!.std!).toBeGreaterThan(200);
+  });
+
+  it("원형 평균 대비 감은 차로 요약하면 실제 퍼짐이 나온다", () => {
+    const rel = relToCircularMeanDeg(rolls)!;
+    // 원형 평균 ≈ 179.975 → 차 −0.475, 0.525, −0.175, 0.125
+    expect(rel[0]).toBeCloseTo(-0.475, 3);
+    expect(rel[1]).toBeCloseTo(0.525, 3);
+    const s = summarize(rel)!;
+    expect(s.std!).toBeGreaterThan(0.3);
+    expect(s.std!).toBeLessThan(0.6);
+    expect(s.max - s.min).toBeCloseTo(1.0, 3);
+  });
+
+  it("평균을 정할 수 없으면 null, 빈 배열도 null", () => {
+    expect(relToCircularMeanDeg([0, 180])).toBeNull();
+    expect(relToCircularMeanDeg([])).toBeNull();
+  });
+});
+
