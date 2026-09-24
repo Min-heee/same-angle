@@ -1,0 +1,315 @@
+/*
+ * 점검 페이지 전용. 아이폰 세로 폭, 한 손 엄지 조작을 기준으로 잡았다:
+ * 버튼 높이 48px 이상, 한 줄에 버튼 두 개까지, 글자 16px 이상(사파리 입력 확대 방지).
+ */
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px 96px;
+}
+
+.header {
+  padding: 20px 0 12px;
+}
+
+.header h1 {
+  font-size: 1.35rem;
+}
+
+.lede {
+  color: var(--muted);
+  font-size: 0.93rem;
+  margin-top: 6px;
+}
+
+.promise {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 0.9rem;
+}
+
+/* 미리보기: 스크롤해도 보이게 위에 붙인다. */
+.preview {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.stage {
+  position: relative;
+  margin: 0 auto;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* 좌우 반전 금지: transform 을 두지 않는다(PRD F11). */
+.stage video,
+.stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.stageEmpty {
+  color: #aaa;
+  font-size: 0.85rem;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  position: absolute;
+  inset: 0;
+  text-align: center;
+  padding: 8px;
+}
+
+.liveLine {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 6px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.section {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sectionHead h2 {
+  font-size: 1.05rem;
+}
+
+.ref {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.how {
+  font-size: 0.9rem;
+  margin-top: 8px;
+}
+
+.chip {
+  flex: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.chip_idle {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.chip_running {
+  background: var(--run-wash);
+  color: var(--run);
+}
+
+.chip_done {
+  background: var(--ok-wash);
+  color: var(--ok);
+}
+
+.chip_failed {
+  background: var(--bad-wash);
+  color: var(--bad);
+}
+
+.reason {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bad-wash);
+  color: var(--bad);
+  font-size: 0.85rem;
+}
+
+.note {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warn-wash);
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.btn {
+  flex: 1 1 140px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: var(--brand-fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btnGhost {
+  composes: btn;
+  background: transparent;
+  color: var(--brand);
+}
+
+.small {
+  flex: none;
+  min-height: 36px;
+  padding: 4px 10px;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--fg);
+  font-family: inherit;
+}
+
+.select {
+  min-height: 48px;
+  font-size: 16px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--fg);
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.seg {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.seg label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px 12px;
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
+.pre {
+  margin-top: 10px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.details {
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+
+.details summary {
+  cursor: pointer;
+  color: var(--brand);
+  min-height: 32px;
+}
+
+.countdown {
+  font-size: 2.4rem;
+  font-weight: 700;
+  text-align: center;
+  margin-top: 10px;
+}
+
+.list {
+  margin-top: 10px;
+  padding-left: 18px;
+  font-size: 0.85rem;
+}
+
+.textarea {
+  width: 100%;
+  min-height: 160px;
+  margin-top: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--fg);
+  padding: 8px;
+}
+
+.testImg {
+  display: block;
+  margin-top: 10px;
+  max-width: 60%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.file {
+  margin-top: 10px;
+  font-size: 16px;
+  width: 100%;
+}
