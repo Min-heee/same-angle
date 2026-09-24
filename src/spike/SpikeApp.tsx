@@ -8,10 +8,10 @@
  * 건드리면 정적 내보내기의 프리렌더가 깨진다.
  */
 
-import { useEffect, useState } from "react";
-import { SECTION_KEYS } from "@/core/report";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { unlockAudio } from "./beep";
 import { SpikeProvider, useSpike } from "./context";
+import { SECTION_NAV, STATUS_MARK, navLabel } from "./nav";
 import { installFetchGuard } from "./netguard";
 import { CameraSection } from "./sections/Camera";
 import { EnvSection } from "./sections/Env";
@@ -36,10 +36,24 @@ const STATUS_COLOR = {
   failed: "var(--bad)",
 } as const;
 
-function Preview() {
-  const { videoRef, overlayRef, stream, live, loopRunning, sections } = useSpike();
-  const [big, setBig] = useState(false);
+function Preview({ big, setBig }: { big: boolean; setBig: (f: (b: boolean) => boolean) => void }) {
+  const { videoRef, overlayRef, stream, live, loopRunning } = useSpike();
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  // 붙어 있는 미리보기 높이를 CSS 변수로. 섹션의 scroll-margin-top 이 이 값을 써서, 링크로
+  // 건너뛴 섹션 제목·버튼이 미리보기 밑에 숨지 않는다(크게·작게·회전 모두).
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver !== "function") return;
+    const root = document.documentElement;
+    const ro = new ResizeObserver(() => root.style.setProperty("--preview-h", `${Math.round(el.offsetHeight)}px`));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--preview-h");
+    };
+  }, []);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -59,7 +73,7 @@ function Preview() {
   const d = live?.last?.dec;
 
   return (
-    <div className={s.preview}>
+    <div className={s.preview} ref={boxRef}>
       <div className={s.stage} style={{ width: `min(100%, calc(${vh}vh * ${ratio}))`, aspectRatio: `${ratio}` }}>
         <video ref={videoRef} playsInline muted autoPlay />
         <canvas ref={overlayRef} />
@@ -74,21 +88,49 @@ function Preview() {
           {big ? "작게" : "크게"}
         </button>
       </div>
-      <div className={s.liveLine} aria-label="섹션 상태">
-        {SECTION_KEYS.map((k, i) => (
-          <a key={k} href={`#s${i}`} style={{ color: STATUS_COLOR[sections[k].status], textDecoration: "none", fontWeight: 700 }}>
-            {i}
-          </a>
-        ))}
-        <a href="#s12" style={{ textDecoration: "none", fontWeight: 700 }}>
-          12 내보내기
-        </a>
-      </div>
     </div>
   );
 }
 
+/**
+ * 하단 섹션 바. 엄지가 닿는 화면 아래에 두고, 칩마다 44px 이상·번호와 상태 기호(✓ ✕ …)를
+ * 글자로 붙인다(색만으로 구별하지 않게). 누르면 미리보기를 작게 돌린 뒤 그 섹션으로 간다.
+ */
+function BottomNav({ setBig }: { setBig: (f: (b: boolean) => boolean) => void }) {
+  const { sections } = useSpike();
+
+  const go = (e: MouseEvent<HTMLAnchorElement>, no: number) => {
+    e.preventDefault();
+    setBig(() => false);
+    // 미리보기 높이가 줄어든 뒤(두 프레임 뒤) 스크롤해야 scroll-margin 이 새 높이를 쓴다.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => document.getElementById(`s${no}`)?.scrollIntoView({ block: "start" })),
+    );
+  };
+
+  return (
+    <nav className={s.bottomNav} aria-label="섹션 이동">
+      {SECTION_NAV.map((item) => {
+        const status = item.key ? sections[item.key].status : null;
+        return (
+          <a
+            key={item.no}
+            href={`#s${item.no}`}
+            className={s.navChip}
+            onClick={(e) => go(e, item.no)}
+            aria-label={navLabel(item, status)}
+            style={status ? { color: STATUS_COLOR[status], borderColor: STATUS_COLOR[status] } : undefined}
+          >
+            {item.key ? `${item.no}${status ? STATUS_MARK[status] : ""}` : `${item.no} 내보내기`}
+          </a>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function SpikeApp() {
+  const [big, setBig] = useState(false);
   useEffect(() => {
     // MediaPipe 사용 통계(odml.pa.googleapis.com)가 기기를 떠나지 않게, 무엇이든 불러오기 전에.
     installFetchGuard();
@@ -128,7 +170,7 @@ export default function SpikeApp() {
             들어가지 않습니다.
           </p>
         </header>
-        <Preview />
+        <Preview big={big} setBig={setBig} />
         <EnvSection />
         <CameraSection />
         <FaceSection />
@@ -143,6 +185,7 @@ export default function SpikeApp() {
         <NetworkSection />
         <ExportSection />
       </main>
+      <BottomNav setBig={setBig} />
     </SpikeProvider>
   );
 }

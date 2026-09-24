@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 import type { SectionStatus } from "@/core/report";
 import { explainFailure } from "./explain";
+import { nextNav } from "./nav";
 import s from "./spike.module.css";
 
 const STATUS_LABEL: Record<SectionStatus, string> = {
@@ -48,7 +49,19 @@ export function Section(props: {
         {props.status !== "failed" && props.reason ? <p className={s.note}>{props.reason}</p> : null}
       </div>
       {props.children}
+      <NextLink no={props.no} status={props.status} />
     </section>
+  );
+}
+
+/** 섹션이 끝나면 다음 섹션으로 가는 링크(4981px 짜리 페이지를 헤매지 않게). */
+function NextLink({ no, status }: { no: number; status: SectionStatus }) {
+  const next = nextNav(no);
+  if (status !== "done" || !next) return null;
+  return (
+    <a className={s.nextLink} href={`#s${next.no}`}>
+      다음: {next.no}번 {next.title} ↓
+    </a>
   );
 }
 
