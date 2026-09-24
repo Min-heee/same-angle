@@ -33,7 +33,13 @@ interface DeviceRow {
 interface StartRecord {
   how: string;
   trackLabel: string;
-  settings: JsonValue;
+  /**
+   * getUserMedia 가 연 그대로의 설정과, torch 끄기(applyConstraints) 뒤의 설정.
+   * applyConstraints 는 트랙의 제약 집합을 통째로 바꾸므로 UA 가 해상도를 다시 고를 수 있다.
+   * 둘 다 남겨야 "후면 카메라가 어떤 해상도로 열리는가"(D1 질문)와 그 뒤의 변화를 가를 수 있다.
+   */
+  settingsBeforeTorch: JsonValue;
+  settingsAfterTorch: JsonValue;
   capabilities: JsonValue;
   torchOff: string;
 }
@@ -65,10 +71,31 @@ const CANDIDATES: { label: string; c: MediaTrackConstraints }[] = [
   { label: "environment", c: { facingMode: { ideal: "environment" } } },
 ];
 
-async function torchOff(track: MediaStreamTrack): Promise<string> {
+/** 해상도 제약만 남긴다(facingMode·deviceId 는 applyConstraints 로 바꾸는 대상이 아니다). */
+function sizeOnly(c: MediaTrackConstraints): MediaTrackConstraints {
+  const out: MediaTrackConstraints = {};
+  if (c.width !== undefined) out.width = c.width;
+  if (c.height !== undefined) out.height = c.height;
+  return out;
+}
+
+/** deviceId·groupId 를 앞 8자로 줄인 JSON(출처별 무작위 값이지만 통째로 남길 이유가 없다). */
+function shortenIds(x: JsonValue): JsonValue {
+  if (x && typeof x === "object" && !Array.isArray(x)) {
+    if ("deviceId" in x) x.deviceId = shortId(String(x.deviceId));
+    if ("groupId" in x) x.groupId = shortId(String(x.groupId));
+  }
+  return x;
+}
+
+/**
+ * torch 를 끈다. 제약 집합을 통째로 바꾸는 호출이라, 연 때의 해상도 ideal 을 같이 넣어
+ * torch 한 줄 때문에 해상도가 기본값으로 다시 골라지지 않게 한다.
+ */
+async function torchOff(track: MediaStreamTrack, keep: MediaTrackConstraints): Promise<string> {
   const caps = (track.getCapabilities?.() ?? {}) as { torch?: unknown };
   try {
-    await track.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] });
+    await track.applyConstraints({ ...keep, advanced: [{ torch: false } as MediaTrackConstraintSet] });
     const now = (track.getSettings() as { torch?: unknown }).torch;
     return `적용됨(capabilities.torch=${JSON.stringify(caps.torch ?? null)}, settings.torch=${JSON.stringify(now ?? null)})`;
   } catch (e) {
@@ -76,8 +103,16 @@ async function torchOff(track: MediaStreamTrack): Promise<string> {
   }
 }
 
+/** getSettings JSON 에서 "1920×1080". 없으면 "—". */
+function sizeOf(x: JsonValue): string {
+  if (x && typeof x === "object" && !Array.isArray(x) && typeof x.width === "number" && typeof x.height === "number") {
+    return `${x.width}×${x.height}`;
+  }
+  return "—";
+}
+
 export function CameraSection() {
-  const { videoRef, stream, setStream, sections, setSection, stopLoop } = useSpike();
+  const { videoRef, stream, setStream, sections, setSection, stopLoop, startLoop, loopRunning, engineRef } = useSpike();
   const sec = sections.camera;
 
   const [attempts, setAttempts] = useState<Attempt[]>([]);
@@ -86,6 +121,8 @@ export function CameraSection() {
   const [starts, setStarts] = useState<StartRecord[]>([]);
   const [resizes, setResizes] = useState<ResizeRow[]>([]);
   const [busy, setBusy] = useState(false);
+  /** 카메라를 다시 켤 때 추론을 어떻게 했는지(2번이 조용히 멈추지 않게 알린다). */
+  const [loopNote, setLoopNote] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   streamRef.current = stream;
 
@@ -125,7 +162,7 @@ export function CameraSection() {
   }, [videoRef]);
 
   const attach = useCallback(
-    async (ms: MediaStream, how: string) => {
+    async (ms: MediaStream, how: string, requested: MediaTrackConstraints) => {
       const v = videoRef.current;
       if (!v) throw new Error("비디오 요소가 없습니다.");
       v.srcObject = ms;
@@ -137,19 +174,23 @@ export function CameraSection() {
       }
       setStream(ms);
       const track = ms.getVideoTracks()[0];
-      const torch = track ? await torchOff(track) : "비디오 트랙 없음";
-      const settings = track ? toJson(track.getSettings()) : null;
-      if (settings && typeof settings === "object" && !Array.isArray(settings) && "deviceId" in settings) {
-        settings.deviceId = shortId(String(settings.deviceId));
-        if ("groupId" in settings) settings.groupId = shortId(String(settings.groupId));
-      }
-      const caps = track && typeof track.getCapabilities === "function" ? toJson(track.getCapabilities()) : null;
-      if (caps && typeof caps === "object" && !Array.isArray(caps) && "deviceId" in caps) {
-        caps.deviceId = shortId(String(caps.deviceId));
-        if ("groupId" in caps) caps.groupId = shortId(String(caps.groupId));
-      }
+      const before = track ? shortenIds(toJson(track.getSettings())) : null;
+      const torch = track ? await torchOff(track, sizeOnly(requested)) : "비디오 트랙 없음";
+      const after = track ? shortenIds(toJson(track.getSettings())) : null;
+      const caps = track && typeof track.getCapabilities === "function" ? shortenIds(toJson(track.getCapabilities())) : null;
       setStarts((p) =>
-        pushCapped(p, { how, trackLabel: track?.label ?? "", settings, capabilities: caps, torchOff: torch }, STARTS_KEEP),
+        pushCapped(
+          p,
+          {
+            how,
+            trackLabel: track?.label ?? "",
+            settingsBeforeTorch: before,
+            settingsAfterTorch: after,
+            capabilities: caps,
+            torchOff: torch,
+          },
+          STARTS_KEEP,
+        ),
       );
 
       // 권한을 받은 뒤라야 라벨이 채워진다.
@@ -179,17 +220,37 @@ export function CameraSection() {
    * 사용자 제스처 안에서 getUserMedia 를 부른다. async 함수는 첫 await 까지 동기로 돌기 때문에
    * 첫 후보의 getUserMedia 호출은 탭 이벤트 안에서 일어난다.
    */
+  /**
+   * 카메라를 다시 켜면 stopCurrent 가 추론 루프도 멈춘다. 돌던 루프는 새 스트림에서 이어서
+   * 돌리고, 아니면 멈춰 있다고 적는다(3·4·9번 버튼이 조용히 꺼지지 않게).
+   */
+  const afterRestart = useCallback(
+    (wasRunning: boolean) => {
+      if (wasRunning && engineRef.current) {
+        startLoop();
+        setLoopNote("카메라를 다시 켜서 2번 추론을 이어서 돌립니다.");
+      } else if (engineRef.current) {
+        setLoopNote("추론이 멈춰 있습니다 — 2번에서 [추론 시작]을 누르세요.");
+      } else {
+        setLoopNote(null);
+      }
+    },
+    [engineRef, startLoop],
+  );
+
   const start = useCallback(async () => {
     setBusy(true);
     setSection("camera", { status: "running", reason: null });
+    const wasRunning = loopRunning;
     stopCurrent();
     let lastErr: unknown = null;
     for (const cand of CANDIDATES) {
       try {
         const ms = await navigator.mediaDevices.getUserMedia({ video: cand.c, audio: false });
         setAttempts((p) => pushCapped(p, { label: cand.label, ok: true, error: null }, ATTEMPTS_KEEP));
-        await attach(ms, cand.label);
+        await attach(ms, cand.label, cand.c);
         setSection("camera", { status: "done", reason: null });
+        afterRestart(wasRunning);
         setBusy(false);
         return;
       } catch (e) {
@@ -200,30 +261,31 @@ export function CameraSection() {
       }
     }
     setSection("camera", { status: "failed", reason: errText(lastErr) });
+    setLoopNote(null);
     setBusy(false);
-  }, [attach, setSection, stopCurrent]);
+  }, [afterRestart, attach, loopRunning, setSection, stopCurrent]);
 
   const restartWithDevice = useCallback(async () => {
     if (!selected) return;
     setBusy(true);
     setSection("camera", { status: "running", reason: null });
+    const wasRunning = loopRunning;
     stopCurrent();
     const label = devices.find((d) => d.deviceId === selected)?.label ?? "(라벨 없음)";
     const how = `deviceId 선택: ${label}`;
+    const video: MediaTrackConstraints = { deviceId: { exact: selected }, width: { ideal: 1920 }, height: { ideal: 1080 } };
     try {
-      const ms = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: selected }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        audio: false,
-      });
+      const ms = await navigator.mediaDevices.getUserMedia({ video, audio: false });
       setAttempts((p) => pushCapped(p, { label: how, ok: true, error: null }, ATTEMPTS_KEEP));
-      await attach(ms, how);
+      await attach(ms, how, video);
       setSection("camera", { status: "done", reason: null });
+      afterRestart(wasRunning);
     } catch (e) {
       setAttempts((p) => pushCapped(p, { label: how, ok: false, error: errText(e) }, ATTEMPTS_KEEP));
       setSection("camera", { status: "failed", reason: errText(e) });
     }
     setBusy(false);
-  }, [attach, devices, selected, setSection, stopCurrent]);
+  }, [afterRestart, attach, devices, loopRunning, selected, setSection, stopCurrent]);
 
   const lastStart = starts[starts.length - 1];
   const v = videoRef.current;
@@ -241,14 +303,31 @@ export function CameraSection() {
         <button className={s.btn} onClick={start} disabled={busy}>
           {stream ? "카메라 다시 켜기" : "카메라 켜기"}
         </button>
-        <button className={s.btnGhost} onClick={stopCurrent} disabled={!stream}>
+        <button
+          className={s.btnGhost}
+          onClick={() => {
+            stopCurrent();
+            setLoopNote(null);
+          }}
+          disabled={!stream}
+        >
           끄기
         </button>
       </div>
+      {loopNote ? (
+        <p className={s.how} role="status">
+          {loopNote}
+        </p>
+      ) : null}
 
       {devices.length > 0 ? (
         <div className={s.row}>
-          <select className={s.select} value={selected} onChange={(e) => setSelected(e.target.value)}>
+          <select
+            className={s.select}
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+            aria-label="카메라 장치"
+          >
             {devices.map((d, i) => (
               <option key={d.deviceId || i} value={d.deviceId}>
                 {d.label || `(라벨 없음 ${i + 1})`}
@@ -268,6 +347,7 @@ export function CameraSection() {
             ["트랙 라벨", lastStart.trackLabel || "(빈 값)"],
             ["videoWidth×Height", v ? `${v.videoWidth}×${v.videoHeight}` : "—"],
             ["torch 끄기", lastStart.torchOff],
+            ["해상도(torch 끄기 전 → 후)", `${sizeOf(lastStart.settingsBeforeTorch)} → ${sizeOf(lastStart.settingsAfterTorch)}`],
             ["장치 수", String(devices.length)],
           ]}
         />
@@ -310,7 +390,16 @@ export function CameraSection() {
         </details>
       ) : null}
 
-      {lastStart ? <Json value={{ settings: lastStart.settings, capabilities: lastStart.capabilities }} summary="getSettings / getCapabilities" /> : null}
+      {lastStart ? (
+        <Json
+          value={{
+            settingsBeforeTorch: lastStart.settingsBeforeTorch,
+            settingsAfterTorch: lastStart.settingsAfterTorch,
+            capabilities: lastStart.capabilities,
+          }}
+          summary="getSettings(전·후) / getCapabilities"
+        />
+      ) : null}
     </Section>
   );
 }
