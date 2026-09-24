@@ -17,8 +17,11 @@
  *     'from-image'|'flipY' 라 엔진에 따라 TypeError 이거나 A 와 같다. 동작 기록만 하고 판정에 쓰지 않는다.
  *  C. HTMLImageElement — 가장 흔히 쓰는 경로
  *
- * 메모리: 아이폰 사진은 24~48MP 다. 12MP 를 넘으면 원본을 detect 에 넣지 않고 긴 변 4096 으로 줄인
- * 캔버스로 잰다(크기 판정은 원본 비트맵의 폭·높이로 한다). 다 쓴 캔버스는 바로 놓는다.
+ * 메모리: 아이폰 사진은 12~48MP 다. detect 에 넣은 크기로 MediaPipe 가 자기 WebGL 캔버스를 키우므로
+ * (4032×3024 사진이면 12MP 캔버스), 긴 변이 1920 을 넘으면 원본을 넣지 않고 긴 변 1920 으로 줄인
+ * 캔버스로 잰다. 방향 판정에는 원본 해상도가 필요 없다 — 크기 판정은 원본 비트맵의 폭·높이로,
+ * roll 은 크기와 무관하다. 제품도 저장본을 긴 변 약 1920 으로 줄여 IMAGE 로 잰다(TECH-NOTES 2.2).
+ * 다 쓴 캔버스는 바로 놓는다.
  *
  * 사진은 메모리에서만 쓰고 버린다. 파일 이름도 남기지 않는다(형식·크기·orientation 숫자만).
  */
@@ -29,15 +32,15 @@ import { downscale, releaseCanvas } from "../canvas";
 import { sampleToJson } from "../compare";
 import { useSpike } from "../context";
 import { restoredList } from "../draft";
+import { engineCounts, type EngineCounts } from "../engine";
 import { EXIF_READ_BYTES, exifVerdict, readJpegInfo, type ExifVerdict, type JpegInfo, type PathLook } from "../exif";
 import { summarizeResult } from "../sample";
 import s from "../spike.module.css";
 import { Json, Section } from "../ui";
 import { errText, fmt } from "../util";
 
-/** 이보다 큰 사진은 원본을 detect 에 넣지 않는다. */
-const MAX_DETECT_PIXELS = 12_000_000;
-const DETECT_LONG_SIDE = 4096;
+/** 긴 변이 이보다 큰 사진은 원본을 detect 에 넣지 않고 이 길이로 줄인다. */
+const DETECT_LONG_SIDE = 1920;
 
 type PathResult = { size: string | null; detectInput: string | null; result: JsonValue; error: string | null };
 
@@ -48,6 +51,8 @@ type Run = {
   legacyNone: PathResult;
   imgElement: PathResult;
   verdict: ExifVerdict;
+  /** 이 기록을 남길 때의 엔진 인스턴스 수(메모리 사고 추적용). 옛 임시 저장본에는 없다. */
+  engines?: EngineCounts;
 };
 
 function look(p: PathResult): PathLook | null {
@@ -85,7 +90,7 @@ export function ExifSection() {
 
         /** 크면 줄인 캔버스로 detect. 크기는 원본(방향 반영 후)의 폭·높이로 적는다. */
         const detectSized = (src: ImageBitmap | HTMLImageElement, w: number, h: number): { result: JsonValue; input: string } => {
-          if (w * h <= MAX_DETECT_PIXELS) {
+          if (Math.max(w, h) <= DETECT_LONG_SIDE) {
             const t0 = performance.now();
             const res = landmarker.detect(src);
             return { result: sampleToJson(summarizeResult(res, w, h, performance.now() - t0)), input: "원본" };
@@ -96,7 +101,7 @@ export function ExifSection() {
             const res = landmarker.detect(c);
             return {
               result: sampleToJson(summarizeResult(res, c.width, c.height, performance.now() - t0)),
-              input: `${Math.round((w * h) / 1e6)}MP → ${c.width}x${c.height} 로 줄여서`,
+              input: `${w}x${h} → ${c.width}x${c.height} 로 줄여서`,
             };
           } finally {
             releaseCanvas(c);
@@ -142,6 +147,7 @@ export function ExifSection() {
           legacyNone,
           imgElement,
           verdict,
+          engines: engineCounts(),
         };
         setRuns((p) => [...p, r].slice(-6));
 
@@ -195,7 +201,7 @@ export function ExifSection() {
         </label>
       </div>
       <p className={s.ref} style={{ marginTop: 6 }}>
-        사진은 이 기기 메모리에서만 재고 버립니다. 보고서에는 형식·크기·회전 태그·각도 숫자만 남습니다. 12MP 가 넘는 사진은 줄여서 잽니다.
+        사진은 이 기기 메모리에서만 재고 버립니다. 보고서에는 형식·크기·회전 태그·각도 숫자만 남습니다. 긴 변이 1920 을 넘는 사진은 줄여서 잽니다(크기 판정은 원본 크기로).
       </p>
       {last ? (
         <ul className={s.list}>
