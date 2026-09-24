@@ -418,13 +418,15 @@ describe("buildReport · validateReport", () => {
       expect(() => buildReport(c)).not.toThrow();
     });
 
-    it(`깊이는 ${MAX_DEPTH}단까지(data 자체가 1단)`, () => {
+    it("깊이는 8단까지(data 자체가 1단)", () => {
+      // 기대 깊이는 상수에서 끌어오지 않고 손으로 적는다(상수가 80으로 바뀌어도 통과하지 않게).
+      expect(MAX_DEPTH).toBe(8);
       const nest = (levels: number): JsonValue => (levels === 0 ? 1 : { a: nest(levels - 1) });
       const a = sampleInput();
-      a.sections.env.data = nest(MAX_DEPTH - 1); // 잎이 MAX_DEPTH 단
+      a.sections.env.data = nest(7); // 잎이 8단
       expect(() => buildReport(a)).not.toThrow();
-      a.sections.env.data = nest(MAX_DEPTH); // 잎이 MAX_DEPTH + 1 단
-      expect(() => buildReport(a)).toThrow(/너무 깊음/);
+      a.sections.env.data = nest(8); // 잎이 9단
+      expect(() => buildReport(a)).toThrow(/env\.data(\.a)+: 너무 깊음\(>8\)/);
     });
 
     it("createdAt 은 끝에 Z 가 있어야 한다(현지 시각 문자열 거부)", () => {
