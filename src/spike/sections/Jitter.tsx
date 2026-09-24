@@ -237,14 +237,14 @@ export function JitterSection() {
       reason={sec.reason}
     >
       <div className={s.row}>
-        <select className={s.select} value={hold} onChange={(e) => setHold(e.target.value)}>
+        <select className={s.select} value={hold} onChange={(e) => setHold(e.target.value)} aria-label="잡는 방식">
           {HOLDS.map((h) => (
             <option key={h.id} value={h.id}>
               {h.label}
             </option>
           ))}
         </select>
-        <select className={s.select} value={view} onChange={(e) => setView(e.target.value)}>
+        <select className={s.select} value={view} onChange={(e) => setView(e.target.value)} aria-label="뷰">
           {VIEWS.map((v) => (
             <option key={v.id} value={v.id}>
               {v.label}
@@ -271,7 +271,11 @@ export function JitterSection() {
         )}
       </div>
       {!loopRunning ? <p className={s.ref} style={{ marginTop: 6 }}>2번에서 추론을 시작해야 기록할 수 있습니다.</p> : null}
-      {remaining !== null ? <p className={s.countdown}>{remaining}</p> : null}
+      {remaining !== null ? (
+        <p className={s.countdown} aria-live="assertive">
+          {remaining}
+        </p>
+      ) : null}
 
       {results.length > 0 ? (
         <ul className={s.list}>

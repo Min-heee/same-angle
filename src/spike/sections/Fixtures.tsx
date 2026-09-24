@@ -201,7 +201,7 @@ export function FixturesSection() {
       </div>
       {!loopRunning ? <p className={s.ref} style={{ marginTop: 6 }}>2번에서 추론을 시작해야 저장할 수 있습니다.</p> : null}
       {count !== null ? (
-        <p className={s.countdown}>
+        <p className={s.countdown} aria-live="assertive">
           {active ? FIXTURE_LABELS[active] : ""} {count > 0 ? count : "모으는 중"}
         </p>
       ) : null}
