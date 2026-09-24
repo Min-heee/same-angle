@@ -8,7 +8,7 @@
 export function grabVideoFrame(video: HTMLVideoElement): HTMLCanvasElement {
   const w = video.videoWidth;
   const h = video.videoHeight;
-  if (!(w > 0 && h > 0)) throw new Error("비디오 프레임이 아직 없습니다(videoWidth 0).");
+  if (!(w > 0 && h > 0)) throw new Error("비디오 프레임이 아직 없습니다(videoWidth 0) — 1번에서 카메라를 켜고 미리보기에 영상이 보이면 다시.");
   const c = document.createElement("canvas");
   c.width = w;
   c.height = h;

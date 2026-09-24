@@ -16,16 +16,29 @@ function readViolations(): Violation[] {
   return Array.isArray(w.__cspViolations) ? [...w.__cspViolations] : [];
 }
 
+/**
+ * WebGL2 지원 여부. 한 번만 재고 기억한다. 잰 컨텍스트는 곧바로 loseContext 로 돌려준다 —
+ * WebKit 은 활성 WebGL 컨텍스트 수에 상한이 있어 넘으면 가장 오래된 것(돌고 있는 MediaPipe 엔진의
+ * GPU 컨텍스트일 수 있다)을 잃는다. [다시 읽기]를 누를 때마다 새로 만들지 않는다.
+ */
+let webgl2Cache: boolean | null = null;
+function hasWebgl2(): boolean {
+  if (webgl2Cache !== null) return webgl2Cache;
+  try {
+    const gl = document.createElement("canvas").getContext("webgl2");
+    webgl2Cache = !!gl;
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+  } catch {
+    webgl2Cache = false;
+  }
+  return webgl2Cache;
+}
+
 function collectEnv() {
   const w = window as unknown as Record<string, unknown>;
   const DOE = w.DeviceOrientationEvent as { requestPermission?: unknown } | undefined;
   const DME = w.DeviceMotionEvent as { requestPermission?: unknown } | undefined;
-  let webgl2 = false;
-  try {
-    webgl2 = !!document.createElement("canvas").getContext("webgl2");
-  } catch {
-    webgl2 = false;
-  }
+  const webgl2 = hasWebgl2();
   const nav = navigator as Navigator & { standalone?: boolean };
   return {
     isSecureContext: window.isSecureContext,
@@ -48,6 +61,14 @@ function collectEnv() {
       offscreenCanvas: typeof w.OffscreenCanvas === "function",
       webgl2,
       clipboardWriteText: typeof navigator.clipboard?.writeText === "function",
+      wakeLock: typeof (navigator as Navigator & { wakeLock?: unknown }).wakeLock === "object",
+      localStorage: (() => {
+        try {
+          return typeof window.localStorage?.getItem === "function";
+        } catch {
+          return false;
+        }
+      })(),
     },
   };
 }
@@ -134,7 +155,7 @@ export function EnvSection() {
       no={0}
       title="환경"
       refText="TECH-NOTES 6절 항목 10(CSP 동작) · 전 항목의 전제"
-      how="열면 자동으로 적힙니다. 다른 섹션을 다 돌린 뒤 [다시 읽기]로 CSP 위반 목록을 갱신하세요."
+      how="열면 자동으로 적히고, CSP 위반 목록은 3초마다 스스로 갱신됩니다. 먼저 [소리 시험]으로 삐 소리를 확인하세요."
       status={sec.status}
       reason={sec.reason}
     >

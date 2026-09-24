@@ -13,6 +13,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { JsonValue } from "@/core/report";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
+import { shareProgress } from "../progress";
 import s from "../spike.module.css";
 import { Section } from "../ui";
 import { errText, pushCapped } from "../util";
@@ -67,11 +69,17 @@ interface Prepared {
 }
 
 export function ShareSection() {
-  const { sections, setSection, manualChecks, setManualChecks } = useSpike();
+  const { sections, setSection, manualChecks, setManualChecks, restored } = useSpike();
+  const rdata = restored?.sections.share.data;
+  /** a[download] 대안이 됐는지(스키마는 그대로, 섹션 data 에). */
+  const [downloadManual, setDownloadManual] = useState<string>(() => {
+    const v = rdata && typeof rdata === "object" && !Array.isArray(rdata) ? rdata.downloadManual : null;
+    return typeof v === "string" ? v : "";
+  });
   const sec = sections.share;
   const [files, setFiles] = useState<Prepared | null>(null);
   const [canShare, setCanShare] = useState<JsonValue>(null);
-  const [log, setLog] = useState<{ what: string; result: string }[]>([]);
+  const [log, setLog] = useState<{ what: string; result: string }[]>(() => restoredList(rdata, "attempts"));
   const urlsRef = useRef<string[]>([]);
 
   useEffect(
@@ -82,16 +90,24 @@ export function ShareSection() {
   );
 
   useEffect(() => {
-    if (!files && log.length === 0) return;
+    if (!files && log.length === 0 && !downloadManual) return;
     setSection("share", {
       data: {
         fileNames: [`${BASE}.png`, `${BASE}.json`],
         pngBytes: files?.png.size ?? null,
         canShare,
         attempts: log,
+        downloadManual: downloadManual || null,
       },
     });
-  }, [files, canShare, log, setSection]);
+  }, [files, canShare, log, downloadManual, setSection]);
+
+  // 완료 = 두 수동 확인(파일 앱 이름 보존, 길게 눌러 저장)에 모두 답함. [파일 준비]만으로는 완료가 아니다.
+  useEffect(() => {
+    if (!files && log.length === 0 && manualChecks.filesAppNamesKept === null && manualChecks.longPressSaved === null) return;
+    const p = shareProgress(manualChecks);
+    setSection("share", { status: p.done ? "done" : "running", reason: p.note });
+  }, [files, log.length, manualChecks, setSection]);
 
   const prepare = async () => {
     setSection("share", { status: "running", reason: null });
@@ -116,8 +132,7 @@ export function ShareSection() {
         }
       };
       setCanShare({ pngAndJson: cs([png, json]), pngOnly: cs([png]), jsonOnly: cs([json]) });
-      // 자동으로 잴 수 있는 것(canShare)은 여기까지. 공유 결과와 저장 확인은 아래에 쌓인다.
-      setSection("share", { status: "done", reason: null });
+      // 자동으로 잴 수 있는 것(canShare)은 여기까지. 완료 여부는 수동 확인 응답으로 정한다(위 이펙트).
     } catch (e) {
       setSection("share", { status: "failed", reason: errText(e) });
     }
@@ -139,7 +154,6 @@ export function ShareSection() {
     p.then(
       () => {
         setLog((prev) => pushCapped(prev, { what, result: "완료(시트에서 대상 선택됨)" }, 20));
-        setSection("share", { status: "done", reason: null });
       },
       (e) => setLog((prev) => pushCapped(prev, { what, result: `거부/취소 ${errText(e)}` }, 20)),
     );
@@ -153,7 +167,7 @@ export function ShareSection() {
       no={10}
       title="공유 테스트"
       refText="TECH-NOTES 6절 항목 8(여러 파일 공유 시트·파일명 보존, <img> 길게 눌러 저장)"
-      how="[파일 준비] → [두 파일 공유]에서 '파일에 저장'을 골라 파일 앱에서 이름을 확인하세요. 아래 그림을 길게 눌러 저장도 해 보고, 결과를 아래에 표시하세요."
+      how="[파일 준비] → [두 파일 공유]에서 '파일에 저장'을 골라 파일 앱에서 이름을 확인하세요(사파리를 떠나니 12번에서 먼저 중간 내보내기). 아래 그림을 길게 눌러 저장, [PNG 다운로드]도 해 보고 세 결과를 아래에 고르세요. 앞의 두 개에 답하면 완료."
       status={sec.status}
       reason={sec.reason}
     >
@@ -173,10 +187,22 @@ export function ShareSection() {
             </button>
           </div>
           <div className={s.row}>
-            <a className={s.btnGhost} href={files.pngUrl} download={`${BASE}.png`} style={{ textAlign: "center", textDecoration: "none" }}>
+            <a
+              className={s.btnGhost}
+              href={files.pngUrl}
+              download={`${BASE}.png`}
+              onClick={() => setLog((p) => pushCapped(p, { what: "PNG 다운로드", result: "눌림(저장 여부는 아래에 고르세요)" }, 20))}
+              style={{ textAlign: "center", textDecoration: "none" }}
+            >
               PNG 다운로드
             </a>
-            <a className={s.btnGhost} href={files.jsonUrl} download={`${BASE}.json`} style={{ textAlign: "center", textDecoration: "none" }}>
+            <a
+              className={s.btnGhost}
+              href={files.jsonUrl}
+              download={`${BASE}.json`}
+              onClick={() => setLog((p) => pushCapped(p, { what: "JSON 다운로드", result: "눌림(저장 여부는 아래에 고르세요)" }, 20))}
+              style={{ textAlign: "center", textDecoration: "none" }}
+            >
               JSON 다운로드
             </a>
           </div>
@@ -209,6 +235,16 @@ export function ShareSection() {
           <option value="">길게 눌러 저장: 안 해 봄</option>
           <option value="yes">길게 눌러 저장: 됨</option>
           <option value="no">길게 눌러 저장: 안 됨</option>
+        </select>
+        <select
+          className={s.select}
+          value={downloadManual}
+          onChange={(e) => setDownloadManual(e.target.value)}
+          aria-label="다운로드로 저장됨"
+        >
+          <option value="">다운로드로 저장: 안 해 봄</option>
+          <option value="yes">다운로드로 저장: 됨</option>
+          <option value="no">다운로드로 저장: 안 됨</option>
         </select>
       </div>
 

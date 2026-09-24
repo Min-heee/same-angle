@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { SectionResult } from "@/core/report";
 import { MODEL_URL } from "../engine";
 import { blockedRequests, fetchGuardInstalled, probeCsp, type CspProbeResult } from "../netguard";
 import { useSpike } from "../context";
@@ -32,7 +33,7 @@ interface OriginRow {
 }
 
 export function NetworkSection() {
-  const { sections, setSection } = useSpike();
+  const { sections, setSection, registerCollector } = useSpike();
   const sec = sections.network;
   const [rows, setRows] = useState<OriginRow[]>([]);
   const [probe, setProbe] = useState<CspProbeResult | null>(null);
@@ -54,7 +55,8 @@ export function NetworkSection() {
     };
   }, []);
 
-  const refresh = useCallback(() => {
+  /** 출처 목록을 읽어 섹션 패치로(동기). [새로 고침]과 내보내기 직전 수집이 같이 쓴다. */
+  const compute = useCallback((): { list: OriginRow[]; patch: Partial<SectionResult> } => {
     try {
       const allow = new Set([window.location.origin, new URL(MODEL_URL).origin]);
       const map = new Map<string, OriginRow>();
@@ -76,26 +78,37 @@ export function NetworkSection() {
         map.set(origin, row);
       }
       const list = [...map.values()].sort((a, b) => b.count - a.count);
-      setRows(list);
       const outside = list.filter((r) => !r.allowed);
       const blocked = blockedRequests();
-      setSection("network", {
-        status: "done",
-        reason: outside.length ? `허용 목록 밖 출처 ${outside.length}곳` : null,
-        data: {
-          totalEntries: entries.length,
-          allowlist: [...allow],
-          origins: list.map((r) => ({ origin: r.origin, count: r.count, allowed: r.allowed, initiatorTypes: r.types })),
-          outsideCount: outside.reduce((n, r) => n + r.count, 0),
-          fetchGuard: { installed: fetchGuardInstalled(), blocked: blocked.map((b) => ({ ...b })) },
-          cspProbe: probe ? { ...probe } : null,
-          note: "Resource Timing 기준. 업로드 여부의 확실한 확인은 맥 사파리 웹 인스펙터로. fetchGuard.blocked 는 보내기 전에 막은 요청.",
+      return {
+        list,
+        patch: {
+          status: "done",
+          reason: outside.length ? `허용 목록 밖 출처 ${outside.length}곳` : null,
+          data: {
+            totalEntries: entries.length,
+            allowlist: [...allow],
+            origins: list.map((r) => ({ origin: r.origin, count: r.count, allowed: r.allowed, initiatorTypes: r.types })),
+            outsideCount: outside.reduce((n, r) => n + r.count, 0),
+            fetchGuard: { installed: fetchGuardInstalled(), blocked: blocked.map((b) => ({ ...b })) },
+            cspProbe: probe ? { ...probe } : null,
+            note: "Resource Timing 기준. 업로드 여부의 확실한 확인은 맥 사파리 웹 인스펙터로. fetchGuard.blocked 는 보내기 전에 막은 요청.",
+          },
         },
-      });
+      };
     } catch (e) {
-      setSection("network", { status: "failed", reason: errText(e) });
+      return { list: [], patch: { status: "failed", reason: errText(e) } };
     }
-  }, [probe, setSection]);
+  }, [probe]);
+
+  const refresh = useCallback(() => {
+    const { list, patch } = compute();
+    setRows(list);
+    setSection("network", patch);
+  }, [compute, setSection]);
+
+  // 내보내기 직전에 자동으로 다시 읽는다(버튼을 잊어도 최신 목록이 보고서에 들어가게).
+  useEffect(() => registerCollector("network", () => compute().patch), [compute, registerCollector]);
 
   const outside = rows.filter((r) => !r.allowed);
   const blocked = rows.length > 0 || probe ? blockedRequests() : [];
@@ -105,7 +118,7 @@ export function NetworkSection() {
       no={11}
       title="네트워크"
       refText="TECH-NOTES 6절 항목 10(허용 목록 밖 요청 0건)"
-      how="다른 섹션을 다 돌린 뒤 [출처 목록 새로 고침]. 허용 목록은 이 사이트 자신과 storage.googleapis.com(모델 파일)뿐입니다."
+      how="내보낼 때 자동으로 다시 읽습니다. 중간에 보고 싶으면 [출처 목록 새로 고침]. 허용 목록은 이 사이트 자신과 storage.googleapis.com(모델 파일)뿐입니다."
       status={sec.status}
       reason={sec.reason}
     >

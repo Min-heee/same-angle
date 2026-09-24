@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JsonValue } from "@/core/report";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
 import s from "../spike.module.css";
 import { Json, KV, Section } from "../ui";
 import { errText, pushCapped, shortId, toJson } from "../util";
@@ -31,6 +32,8 @@ interface DeviceRow {
 }
 
 interface StartRecord {
+  /** performance.now() 기준 ms. 픽스처 captures 의 t 와 같은 시계라 순서를 이을 수 있다. */
+  t: number;
   how: string;
   trackLabel: string;
   /**
@@ -112,32 +115,66 @@ function sizeOf(x: JsonValue): string {
 }
 
 export function CameraSection() {
-  const { videoRef, stream, setStream, sections, setSection, stopLoop, startLoop, loopRunning, engineRef } = useSpike();
+  const {
+    videoRef,
+    stream,
+    setStream,
+    sections,
+    setSection,
+    stopLoop,
+    startLoop,
+    loopRunning,
+    engineRef,
+    recording,
+    restored,
+    pageEventsRef,
+    wakeLockRef,
+    registerCollector,
+  } = useSpike();
   const sec = sections.camera;
+  const rdata = restored?.sections.camera.data;
+  /** 얼굴 가까이에서 렌즈가 바뀌는지는 사람만 볼 수 있다(체크리스트 항목 4). */
+  const [nearLens, setNearLens] = useState<string>(() => {
+    const v = rdata && typeof rdata === "object" && !Array.isArray(rdata) ? rdata.nearLensSwitch : null;
+    return typeof v === "string" ? v : "";
+  });
 
-  const [attempts, setAttempts] = useState<Attempt[]>([]);
+  const [attempts, setAttempts] = useState<Attempt[]>(() => restoredList<Attempt>(rdata, "attempts"));
   const [devices, setDevices] = useState<DeviceRow[]>([]);
   const [selected, setSelected] = useState("");
-  const [starts, setStarts] = useState<StartRecord[]>([]);
-  const [resizes, setResizes] = useState<ResizeRow[]>([]);
+  const [starts, setStarts] = useState<StartRecord[]>(() => restoredList<StartRecord>(rdata, "starts"));
+  const [resizes, setResizes] = useState<ResizeRow[]>(() => restoredList<ResizeRow>(rdata, "resizes"));
+  const [restoredDevices] = useState<JsonValue[]>(() => restoredList<JsonValue>(rdata, "devices"));
   const [busy, setBusy] = useState(false);
   /** 카메라를 다시 켤 때 추론을 어떻게 했는지(2번이 조용히 멈추지 않게 알린다). */
   const [loopNote, setLoopNote] = useState<string | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   streamRef.current = stream;
 
-  // 보고서 데이터는 상태에서 한 번에 만든다.
+  // 보고서 데이터는 상태에서 한 번에 만든다. 중단 기록(화면 숨김·트랙 mute/ended)과 wake lock 은
+  // ref 에 쌓이므로 내보내기 직전 수집에서도 다시 읽는다.
+  const buildData = useCallback(
+    (): JsonValue => ({
+      attempts: toJson(attempts),
+      devices: devices.length
+        ? devices.map((d) => ({ label: d.label, deviceIdShort: shortId(d.deviceId), groupIdShort: d.groupIdShort }))
+        : restoredDevices,
+      starts: starts as unknown as JsonValue,
+      resizes: toJson(resizes),
+      nearLensSwitch: nearLens || null,
+      interruptions: toJson(pageEventsRef.current),
+      wakeLock: toJson(wakeLockRef.current),
+    }),
+    [attempts, devices, nearLens, pageEventsRef, resizes, restoredDevices, starts, wakeLockRef],
+  );
   useEffect(() => {
-    if (attempts.length === 0 && starts.length === 0) return;
-    setSection("camera", {
-      data: {
-        attempts: toJson(attempts),
-        devices: devices.map((d) => ({ label: d.label, deviceIdShort: shortId(d.deviceId), groupIdShort: d.groupIdShort })),
-        starts: starts as unknown as JsonValue,
-        resizes: toJson(resizes),
-      },
-    });
-  }, [attempts, devices, starts, resizes, setSection]);
+    if (attempts.length === 0 && starts.length === 0 && !nearLens) return;
+    setSection("camera", { data: buildData() });
+  }, [attempts.length, buildData, nearLens, setSection, starts.length]);
+  useEffect(
+    () => registerCollector("camera", () => (attempts.length || starts.length || nearLens ? { data: buildData() } : null)),
+    [attempts.length, buildData, nearLens, registerCollector, starts.length],
+  );
 
   // 비디오 크기 변화(회전·렌즈 전환) 기록.
   useEffect(() => {
@@ -182,6 +219,7 @@ export function CameraSection() {
         pushCapped(
           p,
           {
+            t: Math.round(performance.now()),
             how,
             trackLabel: track?.label ?? "",
             settingsBeforeTorch: before,
@@ -295,12 +333,12 @@ export function CameraSection() {
       no={1}
       title="카메라"
       refText="TECH-NOTES 6절 항목 4(렌즈 선택·라벨·전환), 항목 7(회전 시 스트림 크기)"
-      how="[카메라 켜기] → 권한 허용. 장치 목록에서 렌즈를 골라 [이 장치로 다시 켜기]를 해 보고, 폰을 가로·세로로 돌려 보세요."
+      how="[카메라 켜기] → 권한 허용. 장치 목록에서 렌즈를 골라 [이 장치로 다시 켜기]를 해 보고, 폰을 가로·세로로 돌려 보세요. 마지막으로 후면 카메라를 얼굴 15cm 까지 천천히 가져가며 화면이 한 번 흐려졌다 화각이 바뀌는지(렌즈 전환) 보고 아래에 고르세요. 자세 픽스처·흔들림 전에는 후면으로 돌려 두세요."
       status={sec.status}
       reason={sec.reason}
     >
       <div className={s.row}>
-        <button className={s.btn} onClick={start} disabled={busy}>
+        <button className={s.btn} onClick={start} disabled={busy || recording !== null}>
           {stream ? "카메라 다시 켜기" : "카메라 켜기"}
         </button>
         <button
@@ -309,7 +347,7 @@ export function CameraSection() {
             stopCurrent();
             setLoopNote(null);
           }}
-          disabled={!stream}
+          disabled={!stream || recording !== null}
         >
           끄기
         </button>
@@ -319,6 +357,19 @@ export function CameraSection() {
           {loopNote}
         </p>
       ) : null}
+      {recording !== null ? <p className={s.ref} style={{ marginTop: 6 }}>{recording} 기록 중에는 카메라 버튼을 막습니다.</p> : null}
+      <div className={s.row}>
+        <select
+          className={s.select}
+          value={nearLens}
+          onChange={(e) => setNearLens(e.target.value)}
+          aria-label="얼굴 15cm 까지 다가갔을 때 렌즈 전환"
+        >
+          <option value="">근접 렌즈 전환(15cm): 안 해 봄</option>
+          <option value="none">근접 렌즈 전환(15cm): 없음</option>
+          <option value="switched">근접 렌즈 전환(15cm): 있음(흐려졌다 화각이 바뀜)</option>
+        </select>
+      </div>
 
       {devices.length > 0 ? (
         <div className={s.row}>
@@ -334,7 +385,7 @@ export function CameraSection() {
               </option>
             ))}
           </select>
-          <button className={s.btnGhost} onClick={restartWithDevice} disabled={busy || !selected}>
+          <button className={s.btnGhost} onClick={restartWithDevice} disabled={busy || !selected || recording !== null}>
             이 장치로 다시 켜기
           </button>
         </div>

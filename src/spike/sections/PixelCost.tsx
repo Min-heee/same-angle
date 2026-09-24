@@ -13,6 +13,7 @@ import type { JsonValue } from "@/core/report";
 import { pixelMetrics } from "@/core/pixels";
 import { summarize } from "@/core/stats";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
 import s from "../spike.module.css";
 import { Section } from "../ui";
 import { errText, fmt, num } from "../util";
@@ -21,9 +22,9 @@ const SIZE = 128;
 const REPEATS = 20;
 
 export function PixelCostSection() {
-  const { videoRef, latestRef, loopRunning, sections, setSection } = useSpike();
+  const { videoRef, latestRef, loopRunning, sections, setSection, restored } = useSpike();
   const sec = sections.pixelCost;
-  const [runs, setRuns] = useState<JsonValue[]>([]);
+  const [runs, setRuns] = useState<JsonValue[]>(() => restoredList<JsonValue>(restored?.sections.pixelCost.data, "runs"));
 
   useEffect(() => {
     if (runs.length) setSection("pixelCost", { data: { size: SIZE, repeats: REPEATS, runs } });

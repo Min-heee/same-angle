@@ -20,6 +20,7 @@ import type { JsonValue } from "@/core/report";
 import { diffSamples, sampleToJson } from "../compare";
 import { downscale, grabVideoFrame, releaseCanvas } from "../canvas";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
 import { engineCounts } from "../engine";
 import { summarizeResult } from "../sample";
 import s from "../spike.module.css";
@@ -37,9 +38,9 @@ type ImageCaptureCtor = new (track: MediaStreamTrack) => ImageCaptureLike;
 const LONG_SIDE = 1920;
 
 export function TakePhotoSection() {
-  const { stream, videoRef, imageEngine, sections, setSection } = useSpike();
+  const { stream, videoRef, imageEngine, sections, setSection, restored } = useSpike();
   const sec = sections.takePhoto;
-  const [runs, setRuns] = useState<JsonValue[]>([]);
+  const [runs, setRuns] = useState<JsonValue[]>(() => restoredList<JsonValue>(restored?.sections.takePhoto.data, "runs"));
   const [busy, setBusy] = useState(false);
   const [supported, setSupported] = useState<boolean | null>(null);
 
@@ -134,7 +135,15 @@ export function TakePhotoSection() {
         notes,
       };
       setRuns((p) => [...p, r].slice(-6));
-      setSection("takePhoto", { status: "done", reason: notes.length ? notes.join(" / ") : null });
+      if (vSample.faces !== 1 || pSmall.faces !== 1) {
+        // 결과는 남기되, 한쪽이라도 얼굴이 1개가 아니면 비교가 안 되므로 실패로 둔다.
+        setSection("takePhoto", {
+          status: "failed",
+          reason: `얼굴을 못 찾음(비디오 ${vSample.faces}개 · 사진 ${pSmall.faces}개) — 얼굴을 화면 가운데에 두고 다시.`,
+        });
+      } else {
+        setSection("takePhoto", { status: "done", reason: notes.length ? notes.join(" / ") : null });
+      }
     } catch (e) {
       setSection("takePhoto", { status: "failed", reason: errText(e) });
     } finally {

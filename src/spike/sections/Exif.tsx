@@ -5,33 +5,71 @@
  *
  * 참고 기준(PRD F1)은 사진 앱의 옛 사진이다. 아이폰 사진은 픽셀을 눕혀 저장하고 EXIF 로
  * 세우는 경우가 있어, 방향이 무시되면 roll 이 ±90° 로 읽히거나 얼굴을 못 찾는다.
- * 세 경로를 나란히 잰다:
- *  A. createImageBitmap(file, {imageOrientation:'from-image'}) — TECH-NOTES 가 "안전한 경로"로 본 것
- *  B. createImageBitmap(file, {imageOrientation:'none'}) — 방향을 무시하면 어떻게 되는지 대조
- *  C. HTMLImageElement 를 그대로 detect 에 — 가장 흔히 쓰는 경로
  *
- * 사진은 메모리에서만 쓰고 버린다. 파일 이름도 남기지 않는다(형식·크기만).
+ * 판정에는 파일 자체의 Orientation 이 필요하다. 세 경로가 같다는 것만으로는 "반영됨"과 "회전이
+ * 없는 사진"을 구별할 수 없다. 그래서 JPEG 앞 128KB 에서 Orientation(0x0112)과 SOF 의 원본
+ * 픽셀 크기를 읽고(exif.ts), orientation 5~8 사진에서 A·C 의 폭·높이가 원본과 뒤바뀌고 roll 이
+ * 0 근처면 "반영됨"으로 본다. 1·없음은 판정 불가로 적는다(아이폰 사진 선택기는 트랜스코딩한
+ * JPEG 을 넘길 수 있다).
+ *
+ *  A. createImageBitmap(file, {imageOrientation:'from-image'}) — TECH-NOTES 가 "안전한 경로"로 본 것
+ *  B. createImageBitmap(file, {imageOrientation:'none'}) — 스펙 옛 값. 지금 스펙의 값은
+ *     'from-image'|'flipY' 라 엔진에 따라 TypeError 이거나 A 와 같다. 동작 기록만 하고 판정에 쓰지 않는다.
+ *  C. HTMLImageElement — 가장 흔히 쓰는 경로
+ *
+ * 메모리: 아이폰 사진은 24~48MP 다. 12MP 를 넘으면 원본을 detect 에 넣지 않고 긴 변 4096 으로 줄인
+ * 캔버스로 잰다(크기 판정은 원본 비트맵의 폭·높이로 한다). 다 쓴 캔버스는 바로 놓는다.
+ *
+ * 사진은 메모리에서만 쓰고 버린다. 파일 이름도 남기지 않는다(형식·크기·orientation 숫자만).
  */
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import type { JsonValue } from "@/core/report";
+import { downscale, releaseCanvas } from "../canvas";
 import { sampleToJson } from "../compare";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
+import { EXIF_READ_BYTES, exifVerdict, readJpegInfo, type ExifVerdict, type JpegInfo, type PathLook } from "../exif";
 import { summarizeResult } from "../sample";
 import s from "../spike.module.css";
 import { Json, Section } from "../ui";
 import { errText, fmt } from "../util";
 
-type PathResult = { size: string | null; result: JsonValue; error: string | null };
+/** 이보다 큰 사진은 원본을 detect 에 넣지 않는다. */
+const MAX_DETECT_PIXELS = 12_000_000;
+const DETECT_LONG_SIDE = 4096;
+
+type PathResult = { size: string | null; detectInput: string | null; result: JsonValue; error: string | null };
+
+type Run = {
+  file: { type: string; bytes: number };
+  jpeg: JpegInfo;
+  fromImage: PathResult;
+  legacyNone: PathResult;
+  imgElement: PathResult;
+  verdict: ExifVerdict;
+};
+
+function look(p: PathResult): PathLook | null {
+  if (!p.size || !p.result || typeof p.result !== "object" || Array.isArray(p.result)) return null;
+  const [w, h] = p.size.split("x").map(Number);
+  const r = p.result as { faces?: unknown; roll?: unknown };
+  return {
+    width: w,
+    height: h,
+    faces: typeof r.faces === "number" ? r.faces : 0,
+    roll: typeof r.roll === "number" ? r.roll : null,
+  };
+}
 
 export function ExifSection() {
-  const { imageEngine, sections, setSection } = useSpike();
+  const { imageEngine, sections, setSection, restored } = useSpike();
   const sec = sections.exif;
-  const [runs, setRuns] = useState<JsonValue[]>([]);
+  const [runs, setRuns] = useState<Run[]>(() => restoredList<Run>(restored?.sections.exif.data, "runs"));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (runs.length) setSection("exif", { data: { runs } });
+    if (runs.length) setSection("exif", { data: { runs: runs as unknown as JsonValue } });
   }, [runs, setSection]);
 
   const onFile = useCallback(
@@ -43,20 +81,36 @@ export function ExifSection() {
       setSection("exif", { status: "running", reason: null });
       try {
         const { landmarker } = await imageEngine("CPU");
+        const jpeg = readJpegInfo(await file.slice(0, EXIF_READ_BYTES).arrayBuffer());
 
-        const viaBitmap = async (orientation: ImageOrientation): Promise<PathResult> => {
+        /** 크면 줄인 캔버스로 detect. 크기는 원본(방향 반영 후)의 폭·높이로 적는다. */
+        const detectSized = (src: ImageBitmap | HTMLImageElement, w: number, h: number): { result: JsonValue; input: string } => {
+          if (w * h <= MAX_DETECT_PIXELS) {
+            const t0 = performance.now();
+            const res = landmarker.detect(src);
+            return { result: sampleToJson(summarizeResult(res, w, h, performance.now() - t0)), input: "원본" };
+          }
+          const c = downscale(src, w, h, DETECT_LONG_SIDE);
+          try {
+            const t0 = performance.now();
+            const res = landmarker.detect(c);
+            return {
+              result: sampleToJson(summarizeResult(res, c.width, c.height, performance.now() - t0)),
+              input: `${Math.round((w * h) / 1e6)}MP → ${c.width}x${c.height} 로 줄여서`,
+            };
+          } finally {
+            releaseCanvas(c);
+          }
+        };
+
+        const viaBitmap = async (orientation: string): Promise<PathResult> => {
           let bmp: ImageBitmap | null = null;
           try {
-            bmp = await createImageBitmap(file, { imageOrientation: orientation });
-            const t0 = performance.now();
-            const res = landmarker.detect(bmp);
-            return {
-              size: `${bmp.width}x${bmp.height}`,
-              result: sampleToJson(summarizeResult(res, bmp.width, bmp.height, performance.now() - t0)),
-              error: null,
-            };
+            bmp = await createImageBitmap(file, { imageOrientation: orientation as ImageOrientation });
+            const d = detectSized(bmp, bmp.width, bmp.height);
+            return { size: `${bmp.width}x${bmp.height}`, detectInput: d.input, result: d.result, error: null };
           } catch (e) {
-            return { size: bmp ? `${bmp.width}x${bmp.height}` : null, result: null, error: errText(e) };
+            return { size: bmp ? `${bmp.width}x${bmp.height}` : null, detectInput: null, result: null, error: errText(e) };
           } finally {
             bmp?.close();
           }
@@ -68,29 +122,42 @@ export function ExifSection() {
             const img = new Image();
             img.src = url;
             await img.decode();
-            const t0 = performance.now();
-            const res = landmarker.detect(img);
-            return {
-              size: `${img.naturalWidth}x${img.naturalHeight}`,
-              result: sampleToJson(summarizeResult(res, img.naturalWidth, img.naturalHeight, performance.now() - t0)),
-              error: null,
-            };
+            const d = detectSized(img, img.naturalWidth, img.naturalHeight);
+            return { size: `${img.naturalWidth}x${img.naturalHeight}`, detectInput: d.input, result: d.result, error: null };
           } catch (e) {
-            return { size: null, result: null, error: errText(e) };
+            return { size: null, detectInput: null, result: null, error: errText(e) };
           } finally {
             URL.revokeObjectURL(url);
           }
         };
 
-        const r = {
+        const fromImage = await viaBitmap("from-image");
+        const legacyNone = await viaBitmap("none");
+        const imgElement = await viaImg();
+        const verdict = exifVerdict(jpeg, look(fromImage), look(imgElement));
+        const r: Run = {
           file: { type: file.type || "(빈 값)", bytes: file.size },
-          fromImage: await viaBitmap("from-image"),
-          none: await viaBitmap("none"),
-          imgElement: await viaImg(),
+          jpeg,
+          fromImage,
+          legacyNone,
+          imgElement,
+          verdict,
         };
-        setRuns((p) => [...p, r as unknown as JsonValue].slice(-6));
-        const errs = [r.fromImage, r.none, r.imgElement].filter((x) => x.error).map((x) => x.error);
-        setSection("exif", { status: "done", reason: errs.length ? `일부 경로 실패: ${errs.join(" / ")}` : null });
+        setRuns((p) => [...p, r].slice(-6));
+
+        const aFaces = look(fromImage)?.faces ?? 0;
+        if (fromImage.error || aFaces !== 1) {
+          setSection("exif", {
+            status: "failed",
+            reason: fromImage.error
+              ? `A 경로 실패: ${fromImage.error}`
+              : `이 사진에서 얼굴을 못 찾음(얼굴 ${aFaces}개) — 얼굴이 보이는 다른 사진으로.`,
+          });
+        } else if (verdict.status === "undecidable") {
+          setSection("exif", { status: "running", reason: verdict.note });
+        } else {
+          setSection("exif", { status: "done", reason: verdict.note });
+        }
       } catch (e) {
         setSection("exif", { status: "failed", reason: errText(e) });
       } finally {
@@ -101,14 +168,13 @@ export function ExifSection() {
     [imageEngine, setSection],
   );
 
-  const last = runs[runs.length - 1] as
-    | Record<"fromImage" | "none" | "imgElement", { size: string | null; result: { faces: number; roll: number | null } | null; error: string | null }>
-    | undefined;
+  const last = runs[runs.length - 1];
   const line = (label: string, x: PathResult | undefined) => {
     const r = x?.result as { faces: number; roll: number | null } | null | undefined;
     return (
       <li>
         {label}: {x?.size ?? "—"} · {x?.error ? `실패 ${x.error}` : r ? `얼굴 ${r.faces} · roll ${fmt(r.roll)}°` : "—"}
+        {x?.detectInput && x.detectInput !== "원본" ? ` · ${x.detectInput}` : ""}
       </li>
     );
   };
@@ -118,17 +184,33 @@ export function ExifSection() {
       no={7}
       title="옛 사진(EXIF 회전)"
       refText="TECH-NOTES 6절 '그 밖의 미확인' — IMAGE 모드의 EXIF 회전 반영"
-      how="[사진 고르기]로 세로로 찍은 옛 얼굴 사진 한 장을 고르세요. 세 경로의 크기와 roll 이 같으면 EXIF 가 반영된 것입니다."
+      how="[사진 고르기] → 사진 보관함에서 세로로 찍은 옛 얼굴 사진 1장('사진 찍기'가 아니라 보관함). 판정은 파일의 회전 태그(orientation)로 합니다: 5~8 이면 A·C 가 원본과 폭·높이가 바뀌고 roll 이 0 근처일 때 '반영됨'. 1·없음이면 판정 불가 — 다른 사진으로 한 번 더. 사파리를 떠나니 12번에서 먼저 중간 내보내기."
       status={sec.status}
       reason={sec.reason}
     >
-      <input className={s.file} type="file" accept="image/*" onChange={onFile} disabled={busy} aria-label="사진 고르기" />
-      <p className={s.ref} style={{ marginTop: 6 }}>사진은 이 기기 메모리에서만 재고 버립니다. 보고서에는 형식·크기·각도 숫자만 남습니다.</p>
+      <div className={s.row}>
+        <label className={s.btn} style={{ textAlign: "center", opacity: busy ? 0.45 : 1 }}>
+          {busy ? "재는 중…" : "사진 고르기"}
+          <input className={s.visuallyHidden} type="file" accept="image/*" onChange={onFile} disabled={busy} />
+        </label>
+      </div>
+      <p className={s.ref} style={{ marginTop: 6 }}>
+        사진은 이 기기 메모리에서만 재고 버립니다. 보고서에는 형식·크기·회전 태그·각도 숫자만 남습니다. 12MP 가 넘는 사진은 줄여서 잽니다.
+      </p>
       {last ? (
         <ul className={s.list}>
-          {line("A from-image", last.fromImage as PathResult)}
-          {line("B none", last.none as PathResult)}
-          {line("C <img>", last.imgElement as PathResult)}
+          <li>
+            파일 {last.file.type} · orientation {last.jpeg.orientation ?? "없음"} · 원본 픽셀{" "}
+            {last.jpeg.width && last.jpeg.height ? `${last.jpeg.width}x${last.jpeg.height}` : "모름"}
+          </li>
+          {line("A from-image", last.fromImage)}
+          {line("C <img>", last.imgElement)}
+          {line("B 'none'(스펙 옛 값 — 동작 기록만)", last.legacyNone)}
+          <li>
+            판정:{" "}
+            {last.verdict.status === "applied" ? "반영됨" : last.verdict.status === "notApplied" ? "반영 안 됨" : "판정 불가"} —{" "}
+            {last.verdict.note}
+          </li>
         </ul>
       ) : null}
       {last ? <Json value={last} summary={`마지막 결과(총 ${runs.length}회)`} /> : null}

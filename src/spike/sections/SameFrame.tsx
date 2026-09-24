@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { JsonValue } from "@/core/report";
 import { diffSamples, sampleToJson } from "../compare";
 import { useSpike } from "../context";
+import { restoredList } from "../draft";
 import { summarizeResult, type FrameSample } from "../sample";
 import { grabVideoFrame, releaseCanvas } from "../canvas";
 import { engineCounts, loadFaceLandmarker, type EngineCounts } from "../engine";
@@ -37,9 +38,9 @@ interface Run {
 }
 
 export function SameFrameSection() {
-  const { engine, videoRef, nextTs, imageEngine, sections, setSection } = useSpike();
+  const { engine, videoRef, nextTs, imageEngine, sections, setSection, restored } = useSpike();
   const sec = sections.sameFrame;
-  const [runs, setRuns] = useState<Run[]>([]);
+  const [runs, setRuns] = useState<Run[]>(() => restoredList<Run>(restored?.sections.sameFrame.data, "runs"));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -102,10 +103,22 @@ export function SameFrameSection() {
         errors,
       };
       setRuns((p) => [...p, r].slice(-10));
-      setSection("sameFrame", {
-        status: errors.length ? "failed" : "done",
-        reason: errors.length ? errors.join(" / ") : null,
-      });
+      // 얼굴이 정확히 1개가 아닌 프레임은 비교가 안 된다(차가 모두 null). 결과는 남기되 실패로.
+      // GPU 경로만 실패했으면 그 자체가 측정 결과(항목 1: GPU 위임)라 완료로 두고 메모한다.
+      const cpuFailed = errors.some((e) => e.startsWith("IMAGE_CPU"));
+      if (vSample.faces !== 1) {
+        setSection("sameFrame", {
+          status: "failed",
+          reason: `이 프레임에서 얼굴을 못 찾음(얼굴 ${vSample.faces}개) — 얼굴을 화면 가운데에 두고 다시.`,
+        });
+      } else if (cpuFailed) {
+        setSection("sameFrame", { status: "failed", reason: errors.join(" / ") });
+      } else {
+        setSection("sameFrame", {
+          status: "done",
+          reason: errors.length ? `GPU 실패(결과로 기록됨) — 다음으로 넘어가도 됩니다: ${errors.join(" / ")}` : null,
+        });
+      }
     } catch (e) {
       setSection("sameFrame", { status: "failed", reason: errText(e) });
     } finally {
