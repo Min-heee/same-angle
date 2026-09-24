@@ -187,7 +187,11 @@ export function FaceSection() {
           지금 성능 저장
         </button>
       </div>
-      {progress ? <p className={s.ref} style={{ marginTop: 8 }}>{progress}</p> : null}
+      {progress ? (
+        <p className={s.how} role="status">
+          {progress}
+        </p>
+      ) : null}
       {engine ? (
         <p className={s.ref} style={{ marginTop: 4 }}>
           불러온 엔진: {engine.delegate} · {engine.numFaces}명 · VIDEO · 루프 {loopKind ?? "—"}

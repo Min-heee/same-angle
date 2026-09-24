@@ -150,6 +150,17 @@
   font-size: 0.85rem;
 }
 
+.hint {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
 .note {
   margin-top: 8px;
   padding: 8px 10px;
