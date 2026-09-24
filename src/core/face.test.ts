@@ -88,6 +88,25 @@ describe("faceBox", () => {
     ).toBe(true);
   });
 
+  it("아래 여백 안(프레임 안쪽)도 접촉: 여백을 빼고 비교한다", () => {
+    // maxY = (1 − 1/64)·1080 = 1063.125 px. 여백 20 → 1060 이상이라 접촉, 여백 10 → 1070 미만이라 아님.
+    const pts = [
+      { x: 0.4, y: 0.5 },
+      { x: 0.6, y: 1 - 1 / 64 },
+    ];
+    expect(faceBox(pts, W, H, 20)!.touchesEdge).toBe(true);
+    expect(faceBox(pts, W, H, 10)!.touchesEdge).toBe(false);
+  });
+
+  it("위쪽 여백은 여백 값과 비교한다: minY 16.875 px 는 여백 20 이면 접촉, 10 이면 아님", () => {
+    const pts = [
+      { x: 0.4, y: 1 / 64 },
+      { x: 0.6, y: 0.6 },
+    ];
+    expect(faceBox(pts, W, H, 20)!.touchesEdge).toBe(true);
+    expect(faceBox(pts, W, H, 10)!.touchesEdge).toBe(false);
+  });
+
   it("오른쪽·아래 가장자리와 화면 밖 좌표도 접촉으로 본다", () => {
     expect(
       faceBox(

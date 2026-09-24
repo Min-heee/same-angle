@@ -100,7 +100,7 @@ function clamp(v: number, lo: number, hi: number): number {
  * asin 입력은 [−1, 1]로 클램프한다. float 오차로 |R12| 가 1을 아주 조금 넘으면 NaN 이
  * 나오고, NaN 은 이후 모든 비교를 조용히 거짓으로 만든다.
  *
- * 길이 ≠ 16, 비유한 값, 스케일이 0에 가까운 입력은 null. 0으로 채워 계속하지 않는다.
+ * 길이 ≠ 16, 비유한 값, 스케일이 0에 가까운 입력, det(R/s) ≤ 0(반사)은 null. 0으로 채워 계속하지 않는다.
  *
  * 왜 따로 내보내는가: 테스트가 규약 각을 손 계산값과 직접 비교해야, SIGN 곱셈이 무엇이든
  * (−1 이든 0 이든) 규약 쪽 결함을 가리지 못한다. 화면·보고서는 `decompose` 를 쓴다.
@@ -115,6 +115,15 @@ export function decomposeRaw(data: ArrayLike<number>, layout: MatrixLayout): Dec
   if (!(s > 1e-9)) return null;
 
   const R: number[][] = [0, 1, 2].map((r) => [0, 1, 2].map((c) => m(r, c) / s));
+
+  // det(R) ≤ 0 이면 회전이 아니라 반사(또는 퇴화)다. RᵀR = I 는 반사에서도 성립해 orthoError 로는
+  // 가려지지 않고, 반사 행렬은 yaw·pitch·roll 이 0으로 나와 "완벽한 정면"처럼 보인다. 좌우 반전 금지
+  // (PRD F11)를 픽셀이 아니라 행렬에서 한 축만 뒤집어 "고치면" 이렇게 된다. 각을 지어내지 않고 null.
+  const det =
+    R[0][0] * (R[1][1] * R[2][2] - R[1][2] * R[2][1]) -
+    R[0][1] * (R[1][0] * R[2][2] - R[1][2] * R[2][0]) +
+    R[0][2] * (R[1][0] * R[2][1] - R[1][1] * R[2][0]);
+  if (!(det > 0)) return null;
 
   // RᵀR − I 의 최대 절대 원소. 균등 스케일이 아니거나 전단이 섞이면 커진다.
   let orthoError = 0;

@@ -139,6 +139,23 @@ describe("detectLayout", () => {
     expect(detectLayout(d)).toBeNull();
   });
 
+  it("행 우선에서 마지막 원소가 1이 아니면(아핀 아님) null", () => {
+    const d = rowMajor(affine(10, 5, 0, 1, [1, 2, -40]));
+    d[15] = 2;
+    expect(detectLayout(d)).toBeNull();
+  });
+
+  it("float32 를 거쳐 온 행렬도 판별한다(MediaPipe Matrix.data 는 Float32Array)", () => {
+    const M = affine(20, -10, 5, 1, [3.5, 1.25, -52]);
+    const f32 = Float32Array.from(colMajor(M));
+    expect(detectLayout(f32)).toBe("col");
+    expect(detectLayout(Float32Array.from(rowMajor(M)))).toBe("row");
+    const d = decomposeRaw(f32, "col")!;
+    expect(d.yaw).toBeCloseTo(20, 4);
+    expect(d.pitch).toBeCloseTo(-10, 4);
+    expect(d.roll).toBeCloseTo(5, 4);
+  });
+
   it("길이 15, 비유한 값은 null", () => {
     const d = colMajor(affine(10, 5, 0, 1, [1, 2, -40]));
     expect(detectLayout(d.slice(0, 15))).toBeNull();
@@ -256,8 +273,10 @@ describe("decompose", () => {
     expect(Number.isFinite(d.yaw)).toBe(true);
     expect(Number.isFinite(d.roll)).toBe(true);
 
-    // 반대쪽 끝도.
+    // 반대쪽 끝도. Rx(−90°) = [[1,0,0],[0,0,1],[0,−1,0]] — R12 만 뒤집고 R21 을 두면
+    // det = −1 인 반사가 되어 분해를 거부한다(아래 반사 테스트).
     M[1][2] = 1 + 1e-12;
+    M[2][1] = -1;
     const e = decomposeRaw(colMajor(M), "col")!;
     expect(Number.isNaN(e.pitch)).toBe(false);
     expect(e.pitch).toBeCloseTo(-90, 9);
@@ -298,6 +317,59 @@ describe("decompose", () => {
     const d = decompose(colMajor(M), "col")!;
     // (1.2)² − 1 = 0.44
     expect(d.orthoError).toBeCloseTo(0.44, 12);
+  });
+
+  it("전단(비대각 왜곡)도 orthoError 에 잡힌다: M01 = 0.3 → 첫·둘째 열 내적 0.3", () => {
+    const M = affine(0, 0, 0, 1, [1, 2, -40]);
+    M[0][1] = 0.3;
+    // 열 c0 = (1,0,0), c1 = (0.3,1,0): c0·c1 = 0.3, |c1|² − 1 = 0.09 → 최대 0.3
+    expect(decompose(colMajor(M), "col")!.orthoError).toBeCloseTo(0.3, 12);
+  });
+
+  it("orthoError 는 RᵀR(열끼리 내적)이지 RRᵀ(행끼리)가 아니다", () => {
+    // R = [[1, a, 0], [0, 1, 0], [0, b, 1]], a = b = 0.6
+    //   RᵀR − I: c1·c1 − 1 = a² + b² = 0.72, c0·c1 = a, c1·c2 = b → 최대 0.72
+    //   RRᵀ − I: r0·r0 − 1 = a², r2·r2 − 1 = b², r0·r1 = a, r1·r2 = b, r0·r2 = ab → 최대 0.6
+    const M = [
+      [1, 0.6, 0, 1],
+      [0, 1, 0, 2],
+      [0, 0.6, 1, -40],
+      [0, 0, 0, 1],
+    ];
+    expect(decompose(colMajor(M), "col")!.orthoError).toBeCloseTo(0.72, 12);
+  });
+
+  it("스케일은 첫 열의 길이다(첫 행이 아니다): yaw 30° 회전에서 x 열만 1.2배", () => {
+    const M = affine(30, 0, 0, 1, [1, 2, -40]);
+    for (let r = 0; r < 3; r++) M[r][0] *= 1.2;
+    // 첫 열 = 1.2·(cos30, 0, −sin30) → 길이 1.2. 첫 행 길이는 √(1.44·cos²30 + sin²30) ≈ 1.153 으로 다르다.
+    const firstRow = Math.hypot(M[0][0], M[0][1], M[0][2]);
+    expect(Math.abs(firstRow - 1.2)).toBeGreaterThan(0.04);
+    const d = decomposeRaw(colMajor(M), "col")!;
+    expect(d.scale).toBeCloseTo(1.2, 12);
+    // R = M/1.2: 둘째·셋째 열 길이² = 1/1.44 → 1 − 1/1.44
+    expect(d.orthoError).toBeCloseTo(1 - 1 / 1.44, 12);
+  });
+
+  it("반사 행렬(det < 0)은 RᵀR = I 라 orthoError 로는 안 보이므로 null 로 거부한다", () => {
+    const mirror = [
+      [-1, 0, 0, 1],
+      [0, 1, 0, 2],
+      [0, 0, 1, -40],
+      [0, 0, 0, 1],
+    ];
+    expect(detectLayout(colMajor(mirror))).toBe("col");
+    expect(decomposeRaw(colMajor(mirror), "col")).toBeNull();
+    expect(decompose(colMajor(mirror), "col")).toBeNull();
+    expect(decompose(rowMajor(mirror), "row")).toBeNull();
+
+    // 실제 자세에서 한 축만 뒤집은 경우(좌우 반전을 행렬 쪽에서 "고친" 결함)도 같다.
+    const posed = affine(20, -10, 5, 1.5, [3.5, 1.25, -52]);
+    for (let c = 0; c < 3; c++) posed[0][c] *= -1;
+    expect(decompose(colMajor(posed), "col")).toBeNull();
+
+    // 반사가 아닌 회전(det = +1)은 그대로 분해한다.
+    expect(decompose(colMajor(affine(20, -10, 5, 1.5, [3.5, 1.25, -52])), "col")).not.toBeNull();
   });
 });
 

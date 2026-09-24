@@ -77,6 +77,15 @@ describe("summarize", () => {
     expect(summarize([1, 9, 5])!.max).toBe(9);
   });
 
+  it("정렬 안 된 입력: [9,2,5,4] → min 2, max 9, 중앙값 4.5, 입력 순서는 그대로", () => {
+    const xs = [9, 2, 5, 4];
+    const s = summarize(xs)!;
+    expect(s.min).toBe(2);
+    expect(s.max).toBe(9);
+    expect(s.median).toBe(4.5);
+    expect(xs).toEqual([9, 2, 5, 4]);
+  });
+
   it("빈 배열은 null, 한 개면 std 만 null", () => {
     expect(summarize([])).toBeNull();
     expect(summarize([1.5])).toEqual({
