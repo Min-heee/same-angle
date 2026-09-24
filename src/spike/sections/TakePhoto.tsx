@@ -9,13 +9,18 @@
  * 크기·위치 비교가 깨진다.
  *
  * 사진은 메모리에서 재고 바로 버린다(ImageBitmap.close). 저장·전송하지 않는다.
+ *
+ * 사진은 긴 변 1920 으로 줄인 것만 잰다. 원본(12~48MP)을 그대로 detect 에 넣으면 MediaPipe 가
+ * 자기 WebGL 캔버스를 그 크기로 키워 구형 아이폰에서 탭이 죽을 수 있고, 제품도 저장본을 긴 변
+ * 약 1920 으로 줄여 IMAGE 로 잰다(TECH-NOTES 2.2). 원본 크기·종횡비는 숫자로만 남긴다.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import type { JsonValue } from "@/core/report";
 import { diffSamples, sampleToJson } from "../compare";
-import { downscale, grabVideoFrame } from "../canvas";
+import { downscale, grabVideoFrame, releaseCanvas } from "../canvas";
 import { useSpike } from "../context";
+import { engineCounts } from "../engine";
 import { summarizeResult } from "../sample";
 import s from "../spike.module.css";
 import { Json, Section } from "../ui";
@@ -63,6 +68,8 @@ export function TakePhotoSection() {
     setSection("takePhoto", { status: "running", reason: null });
     const notes: string[] = [];
     let bitmap: ImageBitmap | null = null;
+    let vCanvas: HTMLCanvasElement | null = null;
+    let small: HTMLCanvasElement | null = null;
     try {
       const { landmarker } = await imageEngine("CPU");
       const ic = new IC(track);
@@ -75,7 +82,7 @@ export function TakePhotoSection() {
       }
 
       // 거의 같은 순간: 비디오 프레임을 먼저 뜨고 곧바로 takePhoto.
-      const vCanvas = grabVideoFrame(video);
+      vCanvas = grabVideoFrame(video);
       const tV = performance.now();
       let blob: Blob;
       let fillLight = "off 요청 수락";
@@ -89,18 +96,13 @@ export function TakePhotoSection() {
       bitmap = await createImageBitmap(blob);
       const PW = bitmap.width;
       const PH = bitmap.height;
+      // 원본은 크기만 읽고 곧바로 줄인 뒤 놓는다(원본을 detect 에 넣지 않는다 — 머리 주석).
+      small = downscale(bitmap, PW, PH, LONG_SIDE);
+      bitmap.close();
+      bitmap = null;
 
       const t0 = performance.now();
       const vSample = summarizeResult(landmarker.detect(vCanvas), vCanvas.width, vCanvas.height, performance.now() - t0);
-
-      let pFull = null;
-      try {
-        const t1 = performance.now();
-        pFull = summarizeResult(landmarker.detect(bitmap), PW, PH, performance.now() - t1);
-      } catch (e) {
-        notes.push(`원본 크기 판정: ${errText(e)}`);
-      }
-      const small = downscale(bitmap, PW, PH, LONG_SIDE);
       const t2 = performance.now();
       const pSmall = summarizeResult(landmarker.detect(small), small.width, small.height, performance.now() - t2);
 
@@ -123,13 +125,12 @@ export function TakePhotoSection() {
         videoAfter: after,
         results: {
           videoFrame: sampleToJson(vSample),
-          photoFull: sampleToJson(pFull),
           photo1920: sampleToJson(pSmall),
         },
         diffs: {
-          photoFull_vs_video: diffSamples(vSample, pFull),
           photo1920_vs_video: diffSamples(vSample, pSmall),
         },
+        engines: { ...engineCounts() },
         notes,
       };
       setRuns((p) => [...p, r].slice(-6));
@@ -138,6 +139,8 @@ export function TakePhotoSection() {
       setSection("takePhoto", { status: "failed", reason: errText(e) });
     } finally {
       bitmap?.close();
+      releaseCanvas(vCanvas);
+      releaseCanvas(small);
       setBusy(false);
     }
   }, [imageEngine, setSection, stream, videoRef]);

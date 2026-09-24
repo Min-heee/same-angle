@@ -34,3 +34,13 @@ export function downscale(
   ctx.drawImage(source, 0, 0, c.width, c.height);
   return c;
 }
+
+/**
+ * 다 쓴 캔버스의 픽셀 버퍼를 바로 놓는다. 사파리는 전체 캔버스 메모리에 한도가 있고, 가비지
+ * 수거를 기다리면 12MP 사진 몇 장으로 한도에 닿는다(TECH-NOTES 3절).
+ */
+export function releaseCanvas(c: HTMLCanvasElement | null | undefined): void {
+  if (!c) return;
+  c.width = 0;
+  c.height = 0;
+}

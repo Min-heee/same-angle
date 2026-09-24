@@ -28,7 +28,9 @@ export type RunningMode = "VIDEO" | "IMAGE";
 
 export interface LoadTimings {
   importMs: number;
+  /** SIMD 탐지(forVisionTasks). 파일을 받지 않는다. */
   filesetMs: number;
+  /** WASM(약 12MB)·모델(약 3.6MB) 받기 + WASM 컴파일 + 그래프 초기화(createFromOptions). */
   createMs: number;
   totalMs: number;
 }
@@ -43,14 +45,20 @@ export interface LoadedLandmarker {
 
 /** 단계마다 제한 시간. 영원한 대기는 복구할 수 없지만 실패는 화면에 적을 수 있다. */
 export const STEP_TIMEOUT_MS = 30_000;
+/**
+ * 마지막 단계(createFromOptions)의 제한 시간. 이 단계 안에서 WASM(약 12MB)을 받아
+ * 컴파일하고 모델(약 3.6MB)도 받는다 — forVisionTasks 는 SIMD 탐지 뒤 경로 문자열만 돌려준다
+ * (vision_bundle.mjs). 휴대폰 통신망의 첫 로드가 30초 안에 15MB 를 받지 못해 "실패"로 적히지 않게 넉넉히.
+ */
+export const MODEL_INIT_TIMEOUT_MS = 60_000;
 
-function withTimeout<T>(p: Promise<T>, what: string, onLate?: (v: T) => void): Promise<T> {
+function withTimeout<T>(p: Promise<T>, what: string, ms: number, onLate?: (v: T) => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
       settled = true;
-      reject(new Error(`${what}: ${STEP_TIMEOUT_MS / 1000}초 안에 끝나지 않음`));
-    }, STEP_TIMEOUT_MS);
+      reject(new Error(`${what}: ${ms / 1000}초 안에 끝나지 않음`));
+    }, ms);
     p.then(
       (v) => {
         if (settled) {
@@ -71,6 +79,40 @@ function withTimeout<T>(p: Promise<T>, what: string, onLate?: (v: T) => void): P
   });
 }
 
+/**
+ * 엔진 인스턴스 수. createFromOptions 마다 WASM 모듈 인스턴스(초기 메모리 18MB, 최대 2GB)와
+ * WebGL 캔버스가 새로 생기고 close() 는 그래프만 닫는다. 아이폰 탭이 메모리로 죽으면 원인을 D1 에서
+ * 따라갈 수 있게, 만든 수와 닫은 수를 센다(보고서 2·5·6·7번에 남는다).
+ */
+let createdCount = 0;
+let closedCount = 0;
+
+export interface EngineCounts {
+  created: number;
+  closed: number;
+  /** 지금 열려 있는 수(= created − closed). */
+  live: number;
+}
+
+export function engineCounts(): EngineCounts {
+  return { created: createdCount, closed: closedCount, live: createdCount - closedCount };
+}
+
+/** close() 를 감싸 닫은 수를 센다. 누가 어디서 닫든(컨텍스트 정리, 늦게 온 인스턴스) 한 번만 센다. */
+function countClose(l: FaceLandmarker): FaceLandmarker {
+  createdCount++;
+  const orig = l.close.bind(l);
+  let done = false;
+  l.close = () => {
+    if (!done) {
+      done = true;
+      closedCount++;
+    }
+    orig();
+  };
+  return l;
+}
+
 export async function loadFaceLandmarker(opts: {
   delegate: Delegate;
   numFaces: number;
@@ -83,14 +125,17 @@ export async function loadFaceLandmarker(opts: {
   const t0 = performance.now();
 
   progress("모듈 불러오는 중…");
-  const mod = await withTimeout(import("@mediapipe/tasks-vision"), "모듈 import");
+  const mod = await withTimeout(import("@mediapipe/tasks-vision"), "모듈 import", STEP_TIMEOUT_MS);
   const t1 = performance.now();
 
-  progress("WASM 경로 확인 중…");
-  const fileset = await withTimeout(mod.FilesetResolver.forVisionTasks(WASM_BASE), "WASM 파일셋");
+  // forVisionTasks 는 WASM 을 받지 않는다. SIMD 지원을 탐지해 로더·WASM 경로 문자열만 고른다.
+  progress("SIMD 탐지 중…");
+  const fileset = await withTimeout(mod.FilesetResolver.forVisionTasks(WASM_BASE), "SIMD 탐지", STEP_TIMEOUT_MS);
   const t2 = performance.now();
 
-  progress(`모델 받고 초기화 중… (${opts.delegate}, ${opts.runningMode})`);
+  progress(
+    `WASM(약 12MB)·모델(약 3.6MB) 받고 초기화 중… (${opts.delegate}, ${opts.runningMode}, 최대 ${MODEL_INIT_TIMEOUT_MS / 1000}초)`,
+  );
   const landmarker = await withTimeout(
     mod.FaceLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: opts.delegate },
@@ -98,8 +143,9 @@ export async function loadFaceLandmarker(opts: {
       numFaces: opts.numFaces,
       outputFacialTransformationMatrixes: true,
       outputFaceBlendshapes: false,
-    }),
+    }).then(countClose),
     "모델 초기화",
+    MODEL_INIT_TIMEOUT_MS,
     // 제한 시간 뒤에 도착한 인스턴스는 아무도 쓰지 않는다. 닫지 않으면 WASM·GPU 자원이 남는다.
     (late) => late.close(),
   );

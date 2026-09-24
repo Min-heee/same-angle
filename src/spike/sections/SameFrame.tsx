@@ -7,6 +7,11 @@
  * GPU 위임은 예외 없이 조용히 틀릴 수 있다(TECH-NOTES 3절, 세그멘터 #6142). 그래서 같은
  * 픽셀에 CPU 결과를 대조한다. 캔버스로 한 번 떠 둔 프레임을 세 경로에 똑같이 넣는다.
  * VIDEO 는 버튼을 누른 즉시(다른 await 전에) 재서, 루프와 같은 엔진·같은 타임스탬프 규칙을 쓴다.
+ *
+ * IMAGE GPU 엔진은 비교 한 번마다 만들고 끝나면 닫는다. 엔진마다 WASM 인스턴스와 WebGL 캔버스가
+ * 따로 생기므로, 페이지 내내 VIDEO + IMAGE CPU + IMAGE GPU 세 개를 쥐고 있으면 아이폰 탭이
+ * 메모리로 쫓겨나기 쉽다. 그 대가로 GPU 초기화 시간이 매번 기록된다(그것도 결과다).
+ * IMAGE CPU 는 6·7번과 같이 쓰므로 공유 캐시에 둔다.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -14,8 +19,8 @@ import type { JsonValue } from "@/core/report";
 import { diffSamples, sampleToJson } from "../compare";
 import { useSpike } from "../context";
 import { summarizeResult, type FrameSample } from "../sample";
-import { grabVideoFrame } from "../canvas";
-import type { Delegate } from "../engine";
+import { grabVideoFrame, releaseCanvas } from "../canvas";
+import { engineCounts, loadFaceLandmarker, type EngineCounts } from "../engine";
 import s from "../spike.module.css";
 import { Json, Section } from "../ui";
 import { errText, fmt, num } from "../util";
@@ -26,6 +31,8 @@ interface Run {
   results: Record<string, JsonValue>;
   diffsVsVideo: Record<string, JsonValue>;
   imageInitMs: Record<string, number | null>;
+  /** 비교가 끝난 뒤(GPU 엔진을 닫은 뒤)의 엔진 인스턴스 수. */
+  engines: EngineCounts;
   errors: string[];
 }
 
@@ -45,8 +52,9 @@ export function SameFrameSection() {
     setBusy(true);
     setSection("sameFrame", { status: "running", reason: null });
     const errors: string[] = [];
+    let canvas: HTMLCanvasElement | null = null;
     try {
-      const canvas = grabVideoFrame(video);
+      canvas = grabVideoFrame(video);
       const W = canvas.width;
       const H = canvas.height;
 
@@ -56,17 +64,28 @@ export function SameFrameSection() {
 
       const samples: Record<string, FrameSample | null> = { VIDEO: vSample };
       const initMs: Record<string, number | null> = {};
-      for (const d of ["CPU", "GPU"] as Delegate[]) {
+      try {
+        const { landmarker, initMs: ms } = await imageEngine("CPU");
+        initMs.IMAGE_CPU = num(ms, 1);
+        const t1 = performance.now();
+        samples.IMAGE_CPU = summarizeResult(landmarker.detect(canvas), W, H, performance.now() - t1);
+      } catch (e) {
+        samples.IMAGE_CPU = null;
+        errors.push(`IMAGE_CPU: ${errText(e)}`);
+      }
+      try {
+        const g0 = performance.now();
+        const gpu = await loadFaceLandmarker({ delegate: "GPU", numFaces: 2, runningMode: "IMAGE" });
+        initMs.IMAGE_GPU = num(performance.now() - g0, 1);
         try {
-          const { landmarker, initMs: ms } = await imageEngine(d);
-          initMs[`IMAGE_${d}`] = num(ms, 1);
           const t1 = performance.now();
-          const res = landmarker.detect(canvas);
-          samples[`IMAGE_${d}`] = summarizeResult(res, W, H, performance.now() - t1);
-        } catch (e) {
-          samples[`IMAGE_${d}`] = null;
-          errors.push(`IMAGE_${d}: ${errText(e)}`);
+          samples.IMAGE_GPU = summarizeResult(gpu.landmarker.detect(canvas), W, H, performance.now() - t1);
+        } finally {
+          gpu.landmarker.close();
         }
+      } catch (e) {
+        samples.IMAGE_GPU = null;
+        errors.push(`IMAGE_GPU: ${errText(e)}`);
       }
 
       const r: Run = {
@@ -79,6 +98,7 @@ export function SameFrameSection() {
           GPU_vs_CPU: diffSamples(samples.IMAGE_CPU, samples.IMAGE_GPU),
         },
         imageInitMs: initMs,
+        engines: engineCounts(),
         errors,
       };
       setRuns((p) => [...p, r].slice(-10));
@@ -88,6 +108,8 @@ export function SameFrameSection() {
       });
     } catch (e) {
       setSection("sameFrame", { status: "failed", reason: errText(e) });
+    } finally {
+      releaseCanvas(canvas);
     }
     setBusy(false);
   }, [engine, imageEngine, nextTs, setSection, videoRef]);
@@ -103,7 +125,7 @@ export function SameFrameSection() {
       no={5}
       title="같은 프레임 비교"
       refText="TECH-NOTES 6절 항목 1(GPU 위임 정확성) · 5절 실험 0"
-      how="얼굴이 화면에 있을 때 [이 프레임 비교]. 처음 한 번은 IMAGE 엔진 두 개를 새로 만들어 몇 초 걸립니다. 정면·돌린 자세에서 몇 번씩."
+      how="얼굴이 화면에 있을 때 [이 프레임 비교]. IMAGE GPU 엔진은 매번 새로 만들고 닫아서(메모리) 누를 때마다 몇 초 걸립니다. 정면·돌린 자세에서 몇 번씩."
       status={sec.status}
       reason={sec.reason}
     >
