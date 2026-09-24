@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { SECTION_KEYS } from "@/core/report";
 import { unlockAudio } from "./beep";
 import { SpikeProvider, useSpike } from "./context";
+import { installFetchGuard } from "./netguard";
 import { CameraSection } from "./sections/Camera";
 import { EnvSection } from "./sections/Env";
 import { ExifSection } from "./sections/Exif";
@@ -89,6 +90,11 @@ function Preview() {
 
 export default function SpikeApp() {
   useEffect(() => {
+    // MediaPipe 사용 통계(odml.pa.googleapis.com)가 기기를 떠나지 않게, 무엇이든 불러오기 전에.
+    installFetchGuard();
+  }, []);
+
+  useEffect(() => {
     // iOS 는 사용자 제스처 안에서만 오디오를 연다. 첫 탭에서 한 번.
     const onFirst = () => unlockAudio();
     document.addEventListener("pointerdown", onFirst, { once: true });
@@ -106,9 +112,11 @@ export default function SpikeApp() {
             이어집니다.
           </p>
           <p className={s.promise}>
-            카메라 영상과 고른 사진은 <strong>이 기기 안에서만</strong> 처리하고 어디로도 보내지 않습니다. 네트워크로 나가는 것은
-            얼굴 모델 파일을 Google 서버(storage.googleapis.com)에서 받는 요청뿐입니다. 결과 JSON 에는 이미지·랜드마크가 들어가지
-            않습니다.
+            카메라 영상과 고른 사진은 <strong>이 기기 안에서만</strong> 처리하고 어디로도 보내지 않습니다. 이 페이지가 네트워크로
+            보내도 되는 요청은 얼굴 모델 파일을 Google 서버(storage.googleapis.com)에서 받는 것뿐입니다. MediaPipe 라이브러리는
+            사용 통계를 Google(odml.pa.googleapis.com)로 보내려 하는데, 이 페이지는 그 요청을 보내기 전에 막습니다(fetch 가드 +
+            CSP). 막힌 횟수는 11번에 적힙니다. 실기기 네트워크 기록으로 확인하기 전입니다. 결과 JSON 에는 이미지·랜드마크가
+            들어가지 않습니다.
           </p>
         </header>
         <Preview />

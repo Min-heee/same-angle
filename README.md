@@ -21,7 +21,7 @@
 
 - 이 점검 페이지 자체를 **아이폰에서 아직 한 번도 돌려 보지 않았습니다.** 카메라 없는 맥의 크로미움 계열 브라우저에서 모델 불러오기(CPU·GPU), 얼굴이 없는 합성 캔버스 스트림으로 추론 루프, 실패 이유 표시, 보고서 내보내기까지만 확인했습니다. **실제 얼굴 입력이 한 번도 들어가지 않았으므로 행렬 분해·박스·픽스처 경로는 실기기에서 처음 돕니다.**
 - 행렬 배치(열/행 우선)는 가정하지 않고 판별하지만, yaw·pitch·roll 부호(`src/core/matrix.ts` 의 `*_SIGN`)와 폰 롤 부호는 [추론]입니다. D1 자세 픽스처로 확정합니다.
-- CSP 는 관찰 모드라 지금은 아무것도 막지 않습니다(아래).
+- CSP 는 `connect-src` 만 강제하고 나머지 지시어는 관찰 모드입니다(아래). 사파리가 강제 헤더를 실제로 지키는지는 실기기에서 아직 확인하지 않았습니다.
 
 ## 로컬 실행
 
@@ -36,19 +36,23 @@ npm run preview      # 빌드한 out/ 을 vercel.json 과 같은 헤더로 띄�
 
 ## 네트워크 경계
 
-**약속: 카메라 영상과 사진은 기기 밖으로 나가지 않습니다.** 앱 코드는 사진·영상·측정값을 네트워크로 보내지 않습니다. 약속의 범위와 한계는 다음과 같습니다.
+**약속: 카메라 영상과 사진은 기기 밖으로 나가지 않습니다.** 앱 코드는 사진·영상·측정값을 네트워크로 보내지 않습니다. 다만 앱이 쓰는 라이브러리는 스스로 요청을 만들 수 있어서, 약속은 "앱 코드가 보내지 않는다"가 아니라 "허용 목록 밖 요청을 막는다"로 지킵니다. 범위와 한계는 다음과 같습니다.
 
 - 서버가 없습니다. Next.js 정적 내보내기(`out/`)만 배포합니다.
 - MediaPipe WASM 은 `@mediapipe/tasks-vision` 1.0.1 패키지에서 `public/mediapipe/wasm/` 으로 빌드 때 복사해 **같은 출처에서** 내려보냅니다(`scripts/copy-wasm.mjs`, 생성물이라 커밋하지 않음).
 - 얼굴 랜드마크 모델 파일(`face_landmarker.task`)은 재배포 조건이 불명확해 커밋하지 않고 **Google 서버**(`storage.googleapis.com`)에서 받습니다. 이때 기기의 IP 가 Google 로 전달됩니다.
+- **MediaPipe 사용 통계.** `@mediapipe/tasks-vision` 1.0.1 은 얼굴 모델 엔진을 만들 때마다 사용 통계 로거를 만들고, 60초마다·엔진을 닫을 때 `https://odml.pa.googleapis.com/v1/log` 로 POST 합니다(플랫폼·라이브러리 버전·과제 종류·실행 모드·초기화/추론 시간. 끄는 옵션 없음). 패키지 README 의 Privacy Notice 는 이 전송을 알리고 동의를 받을 책임을 앱 개발자에게 둡니다. 이 앱은 그 요청을 **보내기 전에 막습니다**: 배포본은 강제 CSP `connect-src 'self' https://storage.googleapis.com` 이, 모든 환경(헤더 없는 `npm run dev` 포함)은 `src/spike/netguard.ts` 의 fetch 가드가 막습니다. 막힌 횟수는 점검 페이지 11번에 남습니다. 사진·영상은 이 통계에 들어가지 않습니다(패키지 README).
 - 사진이 기기를 떠나는 길은 사용자가 누르는 공유·다운로드뿐이고, 그 뒤(사진 앱, 클라우드 동기화, 메신저)는 앱이 통제하지 못합니다.
-- 이 약속은 아직 **실기기 네트워크 기록으로 확인하지 않았습니다.** 확인은 아이폰을 맥에 연결한 사파리 웹 인스펙터의 네트워크 기록(허용 목록 밖 요청·POST/PUT 0건)으로 합니다. 점검 페이지 11번의 출처 목록(Resource Timing)은 보조 자료이지 증명이 아닙니다.
+- 이 약속은 아직 **실기기 네트워크 기록으로 확인하지 않았습니다.** 확인은 아이폰을 맥에 연결한 사파리 웹 인스펙터의 네트워크 기록(허용 목록 밖 요청·`odml.pa.googleapis.com` 요청·POST/PUT 0건)으로 합니다. 점검 페이지 11번의 출처 목록(Resource Timing)과 가드 기록은 보조 자료이지 증명이 아닙니다.
 
-### CSP 는 지금 관찰 모드(Report-Only)입니다
+### CSP: connect-src 만 강제, 나머지는 관찰(Report-Only)
 
-`vercel.json` 은 모든 경로에 `Content-Security-Policy-Report-Only` 헤더를 붙입니다. 정책(허용 출처는 자기 출처와 `storage.googleapis.com` 뿐, `form-action 'none'` 등)은 PRD F10 의 초안 그대로입니다.
+`vercel.json` 은 모든 경로에 헤더 두 개를 붙입니다.
 
-차단(`Content-Security-Policy`)이 아니라 관찰로 둔 이유: 아이폰 사파리에서 MediaPipe WASM·GPU 위임·카메라 스트림·공유 시트가 이 정책 아래에서 무엇을 요구하는지 **아직 한 번도 확인하지 못했습니다.** 처음부터 차단하면 점검 자체가 막혀 무엇이 모자랐는지 알 수 없습니다. Report-Only 에서도 브라우저는 위반마다 `securitypolicyviolation` 이벤트를 내므로, 점검 단계에서는 위반 목록을 모으고 정책을 고친 뒤 차단 모드로 바꿉니다. **즉, 지금 배포본에서 CSP 는 아무것도 막지 않습니다.**
+- `Content-Security-Policy`(강제): `connect-src 'self' https://storage.googleapis.com; frame-ancestors 'none'`. MediaPipe 사용 통계처럼 허용 목록 밖으로 가는 fetch 를 브라우저가 보내기 전에 막습니다. `connect-src` 는 점검 대상(WASM·GPU 위임·카메라 스트림·공유 시트)을 막지 않습니다.
+- `Content-Security-Policy-Report-Only`(관찰): TECH-NOTES 1절 F10 이 요구하는 `connect-src`·`img-src`·`form-action` 에 `default-src`·`script-src 'wasm-unsafe-eval'`·`worker-src`·`media-src`·`base-uri`·`frame-ancestors` 를 더한 초안입니다. 더한 지시어의 근거는 문서가 아니라 구현 중 판단입니다.
+
+나머지를 관찰로 둔 이유: 아이폰 사파리에서 MediaPipe WASM·GPU 위임·카메라 스트림·공유 시트가 이 정책 아래에서 무엇을 요구하는지 **아직 한 번도 확인하지 못했습니다.** 처음부터 전부 강제하면 점검 자체가 막혀 무엇이 모자랐는지 알 수 없습니다. Report-Only 에서도 브라우저는 위반마다 `securitypolicyviolation` 이벤트를 내므로, 점검 단계에서는 위반 목록을 모으고 정책을 고친 뒤 강제로 바꿉니다(조건은 TECH-NOTES 10절). CSP 문자열은 `src/csp.test.ts` 가 고정합니다.
 
 `vercel.json` 의 빌드 명령은 `npm run verify` 입니다(TECH-NOTES 5절: CI 가 돌지 않으므로 배포가 곧 검증 실행이 되게 함).
 

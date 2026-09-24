@@ -43,6 +43,10 @@ export default function Home() {
             카메라 영상과 사진은 기기 밖으로 보내지 않습니다. 다만 얼굴 모델 파일은 Google 서버(storage.googleapis.com)에서 받으며, 이때
             기기의 IP 주소가 Google 에 전달됩니다.
           </li>
+          <li>
+            MediaPipe 라이브러리는 사용 통계(기기 종류, 라이브러리 버전, 초기화·추론 시간)를 Google(odml.pa.googleapis.com)로 보내려
+            합니다. 이 앱은 CSP 와 fetch 가드로 그 요청을 막습니다. 실기기 네트워크 기록으로 확인하기 전입니다.
+          </li>
         </ul>
       </section>
 

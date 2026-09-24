@@ -116,7 +116,7 @@ export function EnvSection() {
             ["navigator.share / canShare", `${yn(f.share)} / ${yn(f.canShare)}`],
             ["createImageBitmap", yn(f.createImageBitmap)],
             ["WebGL2", yn(f.webgl2)],
-            ["CSP 위반(Report-Only)", `${violations.length}건`],
+            ["CSP 위반(관찰 + 강제)", `${violations.length}건`],
           ]}
         />
       ) : null}
@@ -130,7 +130,8 @@ export function EnvSection() {
         </ul>
       ) : null}
       <p className={s.ref} style={{ marginTop: 8 }}>
-        CSP 는 지금 관찰 모드라 아무것도 막지 않습니다. 위반은 이벤트로만 모읍니다. `npm run dev` 에는 헤더가 없어 0건이 정상입니다.
+        CSP 는 connect-src 만 강제(enforce)하고 나머지 지시어는 관찰(Report-Only)합니다. 위반은 이벤트로 모읍니다. `npm run dev` 에는
+        헤더가 없어 0건이 정상입니다. 11번의 CSP 강제 시험이 connect-src enforce 위반을 하나 남깁니다(루프백 주소).
       </p>
       <div className={s.row}>
         <button className={s.btnGhost} onClick={refresh}>

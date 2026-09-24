@@ -6,11 +6,16 @@
  * 건드리지 않게 하려는 것이다.
  *
  * WASM 은 같은 출처(/mediapipe/wasm, scripts/copy-wasm.mjs 가 복사), 모델은 Google 공식 URL.
+ *
+ * 사용 통계: 1.0.1 은 createFromOptions 마다 로거를 만들어 odml.pa.googleapis.com 으로 POST 한다
+ * (끄는 옵션 없음). 모듈을 import 하기 전에 fetch 가드를 설치해 그 요청이 기기를 떠나기 전에
+ * 막는다(netguard.ts). 배포본에서는 강제 CSP connect-src 가 한 겹 더 막는다.
  * GPU 실패 시 CPU 로 자동 폴백하지 않는다 — 점검에서는 "GPU 가 되는가" 자체가
  * 측정 대상이라, 조용히 CPU 로 바꾸면 결과가 거짓말이 된다.
  */
 
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
+import { installFetchGuard } from "./netguard";
 
 /** package.json 의 @mediapipe/tasks-vision 과 반드시 같아야 한다(copy-wasm 이 설치본을 검사). */
 export const MP_VERSION = "1.0.1";
@@ -73,6 +78,8 @@ export async function loadFaceLandmarker(opts: {
   onProgress?: (msg: string) => void;
 }): Promise<LoadedLandmarker> {
   const progress = opts.onProgress ?? (() => {});
+  // 반드시 import 전에. 로거가 만들어지는 createFromOptions 보다 앞서야 한다.
+  installFetchGuard();
   const t0 = performance.now();
 
   progress("모듈 불러오는 중…");

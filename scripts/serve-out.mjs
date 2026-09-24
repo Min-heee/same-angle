@@ -7,20 +7,20 @@
  * (오프라인에서도 돌고, 버전이 떠 있는 npx 한 줄보다 결정적이다).
  *
  * 일반 정적 서버와 다른 점: vercel.json 의 headers 를 읽어 **같은 헤더를 붙인다.**
- * 같은각도는 CSP(지금은 Report-Only 관찰 모드)가 네트워크 약속의 일부다.
+ * 같은각도는 CSP(connect-src 만 강제, 나머지 지시어는 Report-Only 관찰)가 네트워크 약속의 일부다.
  * 로컬 미리보기에 헤더가 없으면 "로컬에서는 되는데 배포하면 다르게 동작하는" 일이
  * 생기고, 미리 보는 의미가 없어진다. 헤더 정의는 vercel.json 한 곳에만 둔다.
  *
- * source 패턴은 Vercel 이 쓰는 path-to-regexp 문법 중 이 저장소가 쓰는 부분만 옮긴다:
- * 정규식 그룹 "(.*)", 이름 붙은 ":name"·":name*". 그 밖의 문법이 vercel.json 에
- * 들어오면 조용히 무시하지 않고 시작할 때 멈춘다.
+ * 규칙 해석(source 패턴·경로 매칭)은 scripts/headers.mjs 에 있다. CSP 고정 테스트
+ * (src/csp.test.ts)도 같은 모듈을 쓴다.
  */
 
 import { createServer } from "node:http";
-import { createReadStream, readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { headersFor as rulesHeadersFor, loadHeaderRules } from "./headers.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ROOT = resolve(process.argv[2] ?? "out");
@@ -42,52 +42,11 @@ const MIME = {
   ".wasm": "application/wasm",
 };
 
-/** vercel.json 의 source 를 정규식으로. 모르는 문법이면 예외. */
-function sourceToRegExp(source) {
-  if (!source.startsWith("/")) throw new Error(`source 는 / 로 시작해야 합니다: ${source}`);
-  let out = "";
-  for (let i = 0; i < source.length; ) {
-    const rest = source.slice(i);
-    if (rest.startsWith("(.*)")) {
-      out += "(.*)";
-      i += 4;
-      continue;
-    }
-    const named = /^:([A-Za-z_]\w*)(\*)?/.exec(rest);
-    if (named) {
-      out += named[2] ? "(.*)" : "([^/]+)";
-      i += named[0].length;
-      continue;
-    }
-    const ch = source[i];
-    if ("()[]{}?+*|^$\\".includes(ch)) {
-      throw new Error(`serve-out 이 모르는 source 문법입니다: ${source}`);
-    }
-    out += ch === "." ? "\\." : ch;
-    i += 1;
-  }
-  return new RegExp(`^${out}$`);
-}
-
-function loadHeaderRules() {
-  const config = JSON.parse(readFileSync(join(REPO, "vercel.json"), "utf8"));
-  return (config.headers ?? []).map((rule) => ({
-    re: sourceToRegExp(rule.source),
-    headers: rule.headers,
-  }));
-}
-
-const HEADER_RULES = loadHeaderRules();
+const HEADER_RULES = loadHeaderRules(REPO);
 
 /** Vercel 처럼 요청 경로(쿼리 제외)에 맞는 규칙의 헤더를 모두 붙인다. */
 function headersFor(urlPath) {
-  const path = urlPath.split("?")[0];
-  const out = {};
-  for (const rule of HEADER_RULES) {
-    if (!rule.re.test(path)) continue;
-    for (const { key, value } of rule.headers) out[key.toLowerCase()] = value;
-  }
-  return out;
+  return rulesHeadersFor(HEADER_RULES, urlPath);
 }
 
 /** ROOT 밖으로 나가는 경로를 막는다. */
