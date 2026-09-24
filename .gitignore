@@ -1,0 +1,47 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files — 비밀값은 절대 커밋하지 않는다. 자리 표시용 예시만 예외.
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# MediaPipe WASM — scripts/copy-wasm.mjs 가 node_modules 에서 복사하는 생성물.
+# 원본은 package-lock.json 으로 고정된 @mediapipe/tasks-vision 안에 있으므로
+# 저장소에 두 번 넣지 않는다(약 35MB).
+/public/mediapipe/

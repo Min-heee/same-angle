@@ -1,0 +1,79 @@
+/*
+ * 색과 글꼴의 단일 출처.
+ *
+ * 점검 페이지는 아이폰 사파리에서 한 손으로, 밝은 진료실과 어두운 방 양쪽에서 쓴다.
+ * 그래서 기기 설정(밝게/어둡게)을 따르고, 본문 대비는 양쪽 모두 4.5:1 이상을 목표로 골랐다.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --line: #d5dae2;
+  --fg: #14181f;
+  --muted: #56606e;
+  --brand: #2456c9;
+  --brand-fg: #ffffff;
+
+  --ok: #1a7f45;
+  --ok-wash: #e3f4ea;
+  --warn: #8a5a00;
+  --warn-wash: #fbf0d9;
+  --bad: #b3261e;
+  --bad-wash: #fbe5e3;
+  --run: #2456c9;
+  --run-wash: #e3ebfb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1116;
+    --surface: #161b22;
+    --surface-2: #1f2630;
+    --line: #2d3642;
+    --fg: #e8edf4;
+    --muted: #a2afbf;
+    --brand: #7aa2f7;
+    --brand-fg: #0e1116;
+
+    --ok: #5fd694;
+    --ok-wash: #16301f;
+    --warn: #f2c15b;
+    --warn-wash: #2c2410;
+    --bad: #f78787;
+    --bad-wash: #321a1b;
+    --run: #7aa2f7;
+    --run-wash: #17233a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI",
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+a {
+  color: var(--brand);
+}
+
+code,
+pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.86em;
+}
