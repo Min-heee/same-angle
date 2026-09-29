@@ -84,7 +84,7 @@ export interface RecordingCheck {
   frameRatio: number | null;
   maxGapMs: number | null;
   validRatio: number | null;
-  /** 실패면 오너가 읽을 이유, 통과인데 참고할 것이 있으면 메모. */
+  /** 실패면 점검하는 사람이 읽을 이유, 통과인데 참고할 것이 있으면 메모. */
   reason: string | null;
 }
 

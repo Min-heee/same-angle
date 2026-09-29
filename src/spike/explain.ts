@@ -1,5 +1,5 @@
 /**
- * 실패 이유(원문 예외 문자열)를 오너가 바로 따라 할 수 있는 한국어 한 줄로 바꾼다.
+ * 실패 이유(원문 예외 문자열)를 점검하는 사람이 바로 따라 할 수 있는 한국어 한 줄로 바꾼다.
  *
  * 첫 실행에서 가장 흔할 실패는 카메라 권한 거부와 모델 파일 받기 실패인데, 화면에는
  * "NotAllowedError: The request is not allowed by the user agent…" 같은 영어 원문만 떴다.
@@ -37,7 +37,7 @@ const RULES: Rule[] = [
   },
   {
     test: /SecurityError|mediaDevices|isSecureContext|보안 컨텍스트/,
-    text: "HTTPS 주소가 아니라 카메라를 열 수 없습니다. 배포 주소(https://…)의 /spike/ 로 여세요.",
+    text: "HTTPS 주소가 아니라 카메라를 열 수 없습니다. HTTPS 로 배포한 주소의 /spike/ 로 여세요.",
   },
   {
     test: /모델 초기화: \d+초 안에 끝나지 않음/,

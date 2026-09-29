@@ -152,7 +152,7 @@ export function ExportSection() {
     const secs = collectSections();
     const keys = failingSectionKeys(errors.length ? errors : (precheck ?? []));
     if (keys.length === 0) {
-      setMsg({ tone: "bad", text: "섹션 밖(기기 정보·픽스처·수동 확인)의 오류라 비워서 고칠 수 없습니다. 오류 목록을 개발 대화창에 보내 주세요." });
+      setMsg({ tone: "bad", text: "섹션 밖(기기 정보·픽스처·수동 확인)의 오류라 비워서 고칠 수 없습니다. 오류 목록을 개발자에게 보내 주세요." });
       return;
     }
     const next = { ...secs };
@@ -176,7 +176,7 @@ export function ExportSection() {
     navigator.clipboard.writeText(b.text).then(
       () => {
         setStatus("done");
-        setMsg({ tone: "ok", text: `복사했습니다(${b.text.length.toLocaleString()}자). 개발 대화창에 붙여 넣으세요.` });
+        setMsg({ tone: "ok", text: `복사했습니다(${b.text.length.toLocaleString()}자). 개발자에게 보내 주세요.` });
       },
       (e) => setMsg({ tone: "bad", text: `복사 실패: ${errText(e)} — 아래 글상자를 길게 눌러 복사하세요.` }),
     );
@@ -186,8 +186,8 @@ export function ExportSection() {
     <Section
       no={12}
       title="결과 내보내기"
-      refText="TECH-NOTES 6절 전체 — 결과를 개발 대화창으로"
-      how="다 돌렸으면 [공유]·[복사]·[파일로 저장] 중 하나. 개발 대화창에 JSON 을 그대로 붙여 넣으면 됩니다."
+      refText="TECH-NOTES 6절 전체 — 결과를 개발자에게"
+      how="다 돌렸으면 [공유]·[복사]·[파일로 저장] 중 하나. JSON 을 그대로 개발자에게 보내면 됩니다."
       status={status}
     >
       <p className={s.promise}>
