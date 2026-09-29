@@ -2,7 +2,9 @@
 
 경과 사진을 지난번 기준 사진과 같은 각도·거리·위치로 찍도록 돕는 웹앱입니다. 고개가 몇 도만 숙여져도 달라진 게 변화 때문인지 찍는 조건 때문인지 가릴 수 없어서입니다.
 
-> 만드는 중입니다. 지금 있는 것은 아이폰 카메라 동작을 재는 점검 페이지뿐이고, 촬영 안내·비교 화면과 시연 주소는 아직 없습니다.
+> 만드는 중입니다. 지금 있는 것은 아이폰 카메라 동작을 재는 점검 페이지뿐이고, 촬영 안내·비교 화면은 아직 없습니다.
+
+**주소:** https://same-angle.vercel.app (점검 페이지: https://same-angle.vercel.app/spike/)
 
 | ① 첫 화면 | ② 아이폰 점검 페이지 |
 |---|---|
@@ -40,7 +42,7 @@ npm run dev          # http://localhost:3000
 npm run verify       # test → typecheck → lint → build
 ```
 
-아이폰 점검 페이지(`/spike/`)는 HTTPS 로 배포한 주소에서만 열립니다. 쓰는 법은 [세부 설명](docs/DETAILS.md#d1-실기기-점검-페이지spike)에 있습니다.
+아이폰 점검 페이지는 HTTPS 주소에서만 열립니다: https://same-angle.vercel.app/spike/ . 쓰는 법은 [세부 설명](docs/DETAILS.md#d1-실기기-점검-페이지spike)에 있습니다.
 
 ## 한계
 
