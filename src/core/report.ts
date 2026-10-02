@@ -144,16 +144,18 @@ export class ReportValidationError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// 아래 검사 도우미(금지 키·길이·총량)는 다른 종류의 기록(src/pick/record.ts)도 같은 규칙을 쓰도록
+// 내보낸다. 동작은 그대로다.
 
-type Errors = string[];
+export type Errors = string[];
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
 }
 
-function checkKeys(obj: Record<string, unknown>, allowed: readonly string[], path: string, errors: Errors) {
+export function checkKeys(obj: Record<string, unknown>, allowed: readonly string[], path: string, errors: Errors) {
   for (const k of allowed) {
     if (!Object.prototype.hasOwnProperty.call(obj, k)) errors.push(`${path}.${k}: 없음`);
   }
@@ -162,7 +164,7 @@ function checkKeys(obj: Record<string, unknown>, allowed: readonly string[], pat
   }
 }
 
-function checkFiniteNumber(v: unknown, path: string, errors: Errors): v is number {
+export function checkFiniteNumber(v: unknown, path: string, errors: Errors): v is number {
   if (typeof v !== "number" || !Number.isFinite(v)) {
     errors.push(`${path}: 유한한 수가 아님`);
     return false;
@@ -183,15 +185,15 @@ function checkNullableBoolean(v: unknown, path: string, errors: Errors) {
 }
 
 /** 섹션 하나를 검사하는 동안 쌓는 총량. */
-interface Budget {
+export interface Budget {
   numbers: number;
   chars: number;
 }
 
-const newBudget = (): Budget => ({ numbers: 0, chars: 0 });
+export const newBudget = (): Budget => ({ numbers: 0, chars: 0 });
 
 /** 자유 형식 JSON 값 검사: 유한 수·금지 키·data URL·base64 연속·길이·깊이, 그리고 총량 누적. */
-function checkJson(v: unknown, path: string, depth: number, errors: Errors, budget: Budget): void {
+export function checkJson(v: unknown, path: string, depth: number, errors: Errors, budget: Budget): void {
   if (depth > MAX_DEPTH) {
     errors.push(`${path}: 너무 깊음(>${MAX_DEPTH})`);
     return;
@@ -229,7 +231,7 @@ function checkJson(v: unknown, path: string, depth: number, errors: Errors, budg
   errors.push(`${path}: JSON 값이 아님(${v === undefined ? "undefined" : typeof v})`);
 }
 
-function checkBudget(budget: Budget, path: string, errors: Errors) {
+export function checkBudget(budget: Budget, path: string, errors: Errors) {
   if (budget.numbers > MAX_SECTION_NUMBERS) {
     errors.push(`${path}: 수가 너무 많음(${budget.numbers} > ${MAX_SECTION_NUMBERS})`);
   }
