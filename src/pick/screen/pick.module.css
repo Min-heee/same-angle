@@ -1,0 +1,651 @@
+/*
+ * 고르기 화면(/pick/). 폰 세로 폭(390px)에서 한 손으로 쓰는 것을 기준으로 잡았다:
+ * 주 버튼 높이 56px, 그 밖의 누르는 것 48px 이상, 입력 글자 16px 이상(사파리 입력 확대 방지).
+ * 색은 globals.css 의 변수만 쓴다(밝게/어둡게 모두).
+ */
+
+.page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px calc(48px + env(safe-area-inset-bottom));
+}
+
+.header {
+  padding: 6px 0 6px;
+}
+
+/* 누르는 곳은 높이 44px 이상. 글자만 있는 링크도 세로로 넉넉히 잡는다. */
+.home {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.header h1 {
+  font-size: 1.3rem;
+}
+
+.lede {
+  color: var(--muted);
+  font-size: 0.93rem;
+  margin-top: 4px;
+}
+
+/* 단계 표시줄 */
+.steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 14px 0 4px;
+  padding: 0;
+  list-style: none;
+}
+
+.stepItem {
+  padding: 8px 4px 6px;
+  border-top: 3px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.stepDone {
+  border-top-color: var(--brand);
+}
+
+.stepNow {
+  border-top-color: var(--brand);
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.card {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.card h2 {
+  font-size: 1.15rem;
+}
+
+.card h3 {
+  font-size: 1rem;
+  margin-top: 18px;
+}
+
+.p {
+  margin-top: 8px;
+}
+
+.muted {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.small {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* 화면 안에서 그 자리로 내려갈 때(얼굴을 찾은 뒤, "저장으로 가기") 위에 숨 쉴 틈을 둔다. */
+.anchor {
+  scroll-margin-top: 12px;
+}
+
+.jump {
+  margin-top: 4px;
+  font-size: 0.9rem;
+}
+
+.jump a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* 버튼 */
+.actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.btn,
+.btnSecondary,
+.btnQuiet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: var(--brand-fg);
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btnSecondary {
+  background: var(--surface);
+  color: var(--brand);
+}
+
+.btnQuiet {
+  min-height: 48px;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.btn:disabled,
+.btnSecondary:disabled,
+.btnQuiet:disabled,
+.btnDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn:focus-visible,
+.btnSecondary:focus-visible,
+.btnQuiet:focus-visible,
+.filePick:focus-within,
+.seg button:focus-visible,
+.candidate:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
+}
+
+/* 파일 고르기: 라벨이 버튼이고 입력은 숨긴다(눌러서 고르기, 키보드로도 닿는다). */
+.filePick {
+  position: relative;
+}
+
+.fileInput {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.fileInput:disabled {
+  cursor: not-allowed;
+}
+
+/* 여러 개 가운데 하나 고르기 */
+.seg {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.seg4 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (min-width: 520px) {
+  .seg4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.seg button {
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.seg button[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: var(--run-wash);
+  color: var(--brand);
+}
+
+.fieldLabel {
+  display: block;
+  margin-top: 14px;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+/* 알림 상자 */
+.bad,
+.warn,
+.ok,
+.info {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.95rem;
+}
+
+.bad {
+  background: var(--bad-wash);
+  color: var(--bad);
+}
+
+.warn {
+  background: var(--warn-wash);
+  color: var(--warn);
+}
+
+.ok {
+  background: var(--ok-wash);
+  color: var(--ok);
+}
+
+.info {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.boxTitle {
+  font-weight: 700;
+}
+
+.boxNote {
+  margin-top: 4px;
+  font-size: 0.88rem;
+}
+
+.details {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.details summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.list {
+  margin-top: 8px;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.say {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-left: 4px solid var(--brand);
+  background: var(--surface-2);
+  border-radius: 0 10px 10px 0;
+}
+
+.table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.table th,
+.table td {
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  font-weight: 600;
+  width: 42%;
+}
+
+/* 기준 사진 미리보기 */
+.preview {
+  display: block;
+  margin: 12px auto 0;
+  max-width: 100%;
+  max-height: 46vh;
+  border-radius: 10px;
+  background: #000;
+}
+
+/* 진행 */
+.progressTrack {
+  margin-top: 14px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--brand);
+  transition: width 0.2s linear;
+}
+
+.progressLabel {
+  margin-top: 10px;
+  font-weight: 700;
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* 결과 머리 */
+.verdict {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.verdictTitle {
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.verdictSummary {
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 견주어 보기 */
+/* 폭 상한은 화면 조각이 "화면 높이 × 사진의 가로÷세로"로 정한다(넓은 화면에서 그림이 화면 높이를
+   넘지 않게). 좁은 폰에서는 상한에 닿지 않는다. */
+.side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px auto 0;
+}
+
+.figure {
+  margin: 0;
+  min-width: 0;
+}
+
+.frame {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  /* 보정본의 빈 곳과 같은 회색. 사진으로 오인되지 않게. */
+  background: #808080;
+}
+
+.frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* 좌우 반전 금지: transform 을 두지 않는다. */
+}
+
+.framePlaceholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  color: #fff;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.caption {
+  margin-top: 4px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.captionSub {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.overlay {
+  margin: 12px auto 0;
+}
+
+/* 진하기 조절은 그림 위에 있다. */
+.slider {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.slider input {
+  width: 100%;
+  height: 44px;
+  accent-color: var(--brand);
+}
+
+/* 차점 후보 */
+.candidates {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-bottom: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 줄 수가 달라도(지금 보는 장면 표시) 그림이 같은 높이에서 시작하게 위로 붙인다. */
+.candidate {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 104px;
+  padding: 6px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.candidate[aria-pressed="true"] {
+  border-color: var(--brand);
+  background: var(--run-wash);
+}
+
+/* 틀의 모양(가로÷세로)은 화면 조각이 기준 사진에 맞춰 넣는다. 여기 값은 그것이 없을 때의 기본이다. */
+.thumb {
+  display: block;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #808080;
+}
+
+/* 자르지 않는다(contain). 보정본을 못 만들어 원본 장면이 들어온 가로 그림도 전체가 보인다. */
+.thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.candidateNow {
+  display: block;
+  margin-top: 2px;
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.candidateName {
+  display: block;
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.candidateLine {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* 숫자 표 */
+.kv {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 6px 12px;
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.kvHint {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* 자취 그림 */
+.trace {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  margin: 10px auto 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.traceRing {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.traceAxis {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.tracePass {
+  fill: var(--run-wash);
+  stroke: var(--brand);
+  stroke-width: 1.5;
+}
+
+.traceDot {
+  fill: var(--fg);
+}
+
+.traceDotOff {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.traceChosen {
+  fill: none;
+  stroke: var(--bad);
+  stroke-width: 2.5;
+}
+
+.traceText {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.legend {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* 입력 */
+.input {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 16px;
+}
+
+/* 예시 글자도 본문 보조색으로(브라우저 기본 회색은 어두운 화면에서 대비가 모자랐다). */
+.input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.fileLink {
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+}
+
+.fileSize {
+  flex: none;
+  font-weight: 400;
+  font-size: 0.85rem;
+  opacity: 0.85;
+}
+
+.footer {
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  display: grid;
+  gap: 4px;
+}

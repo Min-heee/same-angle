@@ -7,6 +7,9 @@ import { defineConfig } from "vitest/config";
  * 브라우저에서만 확인할 수 있는 것은 /spike/ 점검 페이지가 맡는다.
  */
 export default defineConfig({
+  // 화면 조각(.tsx)을 노드에서 문자열로 그려 보는 시험이 있다. tsconfig 의 jsx 는 Next 용
+  // "preserve" 라서, 시험에서는 여기서 따로 바꿔 준다.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],

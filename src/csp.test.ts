@@ -71,7 +71,20 @@ describe("vercel.json CSP", () => {
     expect(all!.headers.find((h) => h.key === "Referrer-Policy")?.value).toBe("no-referrer");
   });
 
-  it.each(["/", "/spike/", "/mediapipe/wasm/vision_wasm_internal.wasm", "/_next/static/chunks/x.js?v=1"])(
+  it("고르기 화면이 쓰는 주소(blob:)는 관찰 정책 안이다: 동영상은 media-src, 그림은 img-src", () => {
+    // 고르기 화면(/pick/)은 고른 파일을 <video src=blob:> 로 읽고, 결과 그림을 <img src=blob:> 로 보인다.
+    // 강제 헤더는 이 둘을 다루지 않으므로(connect-src 등 네 지시어뿐) 헤더를 바꿀 것이 없다.
+    const ro = directives(all!.headers.find((h) => h.key === "Content-Security-Policy-Report-Only")!.value);
+    expect(ro.get("media-src")).toContain("blob:");
+    expect(ro.get("img-src")).toContain("blob:");
+    // blob: 을 connect-src 에 넣지 않는다 — 파일을 fetch 로 읽지 않는다(F14).
+    const en = directives(all!.headers.find((h) => h.key === "Content-Security-Policy")!.value);
+    expect(en.get("connect-src")).not.toContain("blob:");
+    expect(ro.get("connect-src")).not.toContain("blob:");
+    expect(isAllowedUrl("blob:https://same-angle.example/1234", "https://same-angle.example")).toBe(false);
+  });
+
+  it.each(["/", "/pick/", "/spike/", "/mediapipe/wasm/vision_wasm_internal.wasm", "/_next/static/chunks/x.js?v=1"])(
     "%s 에 두 헤더가 붙는다(serve-out 과 같은 매칭)",
     (path) => {
       const h = headersFor(rules, path);

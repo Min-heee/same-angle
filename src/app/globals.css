@@ -17,7 +17,8 @@
   --brand: #2456c9;
   --brand-fg: #ffffff;
 
-  --ok: #1a7f45;
+  /* 옅은 초록 바탕(--ok-wash) 위에서 4.5:1 을 넘게(#1a7f45 는 4.42:1 이었다). */
+  --ok: #17753f;
   --ok-wash: #e3f4ea;
   --warn: #8a5a00;
   --warn-wash: #fbf0d9;

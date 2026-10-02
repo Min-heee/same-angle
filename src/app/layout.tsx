@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "같은각도",
   description:
-    "기준 사진과 고개 각도·거리·화면 내 위치가 같은지 숫자로 확인하는 촬영 보조 웹앱(구현 초기).",
+    "동영상에서 지난번 사진과 가장 가까운 장면을 골라 기울기·크기·위치를 맞춰 주는 촬영 보조 웹앱(실제 얼굴 동영상 검증 전).",
 };
 
 export const viewport: Viewport = {
