@@ -9,11 +9,16 @@
  */
 
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import type { SourceKind } from "../pipeline";
 import { RULES, RULES_VERSION } from "../rules";
 import { SHOT_KINDS, type ShotKind } from "../record";
 import { failureText, type Failure } from "./failure";
 import { MEMO_MAX, RETAKE_REASONS, stepNumber, type CandidateImages, type ExportState, type Step } from "./flow";
 import {
+  BURST_HOW,
+  BURST_NAMES_STAY,
+  BURST_TIPS,
+  BURST_WHEN,
   CAMERA_SETTINGS,
   MOVE_RANGE,
   MOVE_STEPS,
@@ -41,7 +46,8 @@ import {
 
 const STEP_NAMES: [Step, string][] = [
   ["reference", "기준 사진"],
-  ["video", "동영상"],
+  // 동영상 1개 또는 연사로 찍은 사진 여러 장(PRD v0.3.1).
+  ["video", "동영상·사진"],
   ["analyzing", "분석"],
   // 저장은 결과 화면 맨 아래에 있다. 단계 표시줄에 없는 "⑤"를 따로 두지 않는다.
   ["result", "결과·저장"],
@@ -106,6 +112,35 @@ export function FilePick(props: {
         type="file"
         accept={props.accept}
         capture={props.capture}
+        disabled={props.disabled}
+        onChange={onChange}
+      />
+    </label>
+  );
+}
+
+/** 사진 여러 장을 한꺼번에 고르는 버튼(연사). 카메라를 열지 않고 파일만 받는다. */
+export function MultiFilePick(props: {
+  label: string;
+  accept: string;
+  secondary?: boolean;
+  disabled?: boolean;
+  onFiles: (files: File[]) => void;
+}) {
+  const onChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length > 0) props.onFiles(files);
+  };
+  const cls = `${props.secondary ? s.btnSecondary : s.btn} ${s.filePick} ${props.disabled ? s.btnDisabled : ""}`;
+  return (
+    <label className={cls}>
+      {props.label}
+      <input
+        className={s.fileInput}
+        type="file"
+        accept={props.accept}
+        multiple
         disabled={props.disabled}
         onChange={onChange}
       />
@@ -231,7 +266,7 @@ export function ReferenceStep(props: {
             </p>
             <div className={s.actions}>
               <button type="button" className={s.btn} onClick={props.onNext}>
-                다음: 동영상 고르기
+                다음: 동영상 고르기(또는 연사 사진)
               </button>
             </div>
           </div>
@@ -299,12 +334,17 @@ export function VideoStep(props: {
   cancelled: boolean;
   retakeCount: number;
   onFile: (file: File) => void;
+  /** 연사로 찍은 사진 여러 장을 골랐을 때. */
+  onPhotos?: (files: File[]) => void;
   onBack: () => void;
 }) {
   return (
     <section className={s.card} aria-labelledby="pick-video">
-      <h2 id="pick-video">② 동영상 고르기</h2>
-      <p className={s.p}>고개를 천천히 움직이며 찍은 동영상을 고르면, 기준 사진과 가장 가까운 장면을 찾아 줍니다.</p>
+      <h2 id="pick-video">② 동영상 또는 사진 여러 장 고르기</h2>
+      <p className={s.p}>
+        고개를 천천히 움직이며 찍은 동영상을 고르면, 기준 사진과 가장 가까운 장면을 찾아 줍니다. 동영상 대신 연사로 찍은 사진
+        여러 장을 골라도 됩니다.
+      </p>
 
       <div aria-live="polite">
         {props.cancelled ? <p className={s.info}>분석을 취소했습니다. 동영상을 다시 골라 주세요.</p> : null}
@@ -320,6 +360,35 @@ export function VideoStep(props: {
         {props.retakeCount > 0 ? ` 지금까지 다시 찍은 횟수: ${props.retakeCount}번.` : ""}
       </p>
       <p className={s.muted}>{VIDEO_STAYS}</p>
+
+      <h3 id="pick-burst">또는 사진 여러 장(연사)</h3>
+      <p className={s.p}>
+        {BURST_HOW}. {BURST_WHEN}.
+      </p>
+      <div className={s.actions}>
+        <MultiFilePick
+          label="사진 여러 장 고르기(연사)"
+          accept="image/*"
+          secondary
+          onFiles={props.onPhotos ?? (() => {})}
+        />
+      </div>
+      <p className={s.muted}>
+        한 번에 {RULES.photos.maxCount}장까지 봅니다. 더 고르면 파일 이름 순으로 앞 {RULES.photos.maxCount}장만 봅니다.{" "}
+        {BURST_NAMES_STAY}
+      </p>
+      <details className={s.details}>
+        <summary>연사로 찍는 요령</summary>
+        <ul className={s.list}>
+          {BURST_TIPS.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+        <p className={s.small}>
+          초안입니다. 실제 카메라로 찍은 사진으로는 아직 돌려 보지 못했습니다. 움직이는 범위와 찍기 전 확인은 아래 “찍는
+          방법”과 같습니다.
+        </p>
+      </details>
 
       <ShootGuide shotKind={props.shotKind} />
 
@@ -337,6 +406,8 @@ export function VideoStep(props: {
 
 export function AnalyzingStep(props: {
   video: { width: number; height: number; durationSec: number } | null;
+  /** 입력이 사진 여러 장이면 고른 수와 실제로 보는 수. */
+  photos?: { selected: number; used: number } | null;
   progress: ProgressView;
   cancelling: boolean;
   truncatedSec: number | null;
@@ -350,6 +421,13 @@ export function AnalyzingStep(props: {
         <p className={s.muted}>
           받은 동영상: {props.video.width}×{props.video.height}, {props.video.durationSec.toFixed(1)}초
           {props.truncatedSec !== null ? ` (앞 ${props.truncatedSec}초만 봅니다)` : ""}
+        </p>
+      ) : null}
+      {props.photos ? (
+        <p className={s.muted}>
+          받은 사진: {props.photos.selected}장
+          {props.photos.selected > props.photos.used ? ` (파일 이름 순으로 앞 ${props.photos.used}장만 봅니다)` : ""}. 한 장씩
+          풀어 잽니다.
         </p>
       ) : null}
 
@@ -385,15 +463,20 @@ export function AnalyzingStep(props: {
 // ④ 결과
 
 /** 자취 그림. 가운데 원이 통과 기준, 점이 동영상이 지나간 방향이다. 축에 왼쪽·오른쪽을 적지 않는다. */
-export function TraceFigure({ plot, passDeg }: { plot: TracePlot; passDeg: number }) {
+export function TraceFigure({ plot, passDeg, source }: { plot: TracePlot; passDeg: number; source?: SourceKind }) {
   const c = plot.center;
+  const photos = source === "photos";
   return (
     <figure className={s.figure}>
       <svg
         className={s.trace}
         viewBox={`0 0 ${plot.size} ${plot.size}`}
         role="img"
-        aria-label={`동영상이 지나간 방향 ${plot.points.length}곳과 기준 방향. 가운데 원은 통과 기준 ${passDeg}도입니다.`}
+        aria-label={
+          photos
+            ? `사진 ${plot.points.length}장의 방향과 기준 방향. 가운데 원은 통과 기준 ${passDeg}도입니다.`
+            : `동영상이 지나간 방향 ${plot.points.length}곳과 기준 방향. 가운데 원은 통과 기준 ${passDeg}도입니다.`
+        }
       >
         {plot.rings.map((ring) => (
           <g key={ring.deg}>
@@ -418,8 +501,9 @@ export function TraceFigure({ plot, passDeg }: { plot: TracePlot; passDeg: numbe
         {plot.chosen ? <circle className={s.traceChosen} cx={plot.chosen.x} cy={plot.chosen.y} r={7} /> : null}
       </svg>
       <figcaption className={s.legend}>
-        가운데 색칠한 원이 기준 사진의 방향(통과 기준 {passDeg}°)이고, 점은 동영상이 지나간 방향입니다. 빈 점은 흔들림 등으로 뺀
-        장면, 굵은 원은 지금 보는 장면입니다. 가로는 좌우, 세로는 위아래로 벗어난 정도이며 어림 그림입니다.
+        가운데 색칠한 원이 기준 사진의 방향(통과 기준 {passDeg}°)이고, 점은{" "}
+        {photos ? "사진 한 장 한 장의 방향" : "동영상이 지나간 방향"}입니다. 빈 점은 흔들림 등으로 뺀 장면, 굵은 원은 지금 보는
+        장면입니다. 가로는 좌우, 세로는 위아래로 벗어난 정도이며 어림 그림입니다.
       </figcaption>
     </figure>
   );
@@ -447,10 +531,15 @@ export function CompareView(props: {
   imageStatus: "idle" | "rendering" | "ready" | "failed";
   correctionAvailable: boolean;
   timeText: string;
+  /** 지금 보는 장면의 자리. 없으면 "동영상의 {timeText}". 사진 여러 장이면 "N번째 사진(파일 이름)". */
+  whereText?: string;
+  source?: SourceKind;
   state: CompareState;
   onState: (next: CompareState) => void;
 }) {
   const { mode, variant, opacity } = props.state;
+  const photos = props.source === "photos";
+  const where = props.whereText ?? `동영상의 ${props.timeText}`;
   const set = (patch: Partial<CompareState>) => props.onState({ ...props.state, ...patch });
 
   const shown: CompareState["variant"] = props.correctionAvailable ? variant : "original";
@@ -468,7 +557,7 @@ export function CompareView(props: {
   const current = (style?: { opacity: number }) =>
     url ? (
       // eslint-disable-next-line @next/next/no-img-element -- 기기 안의 blob 그림이다.
-      <img src={url} alt={`${LABEL_CURRENT}: 동영상의 ${props.timeText} 장면, ${variantLabel}`} style={style} />
+      <img src={url} alt={`${LABEL_CURRENT}: ${where}${photos ? "" : " 장면"}, ${variantLabel}`} style={style} />
     ) : (
       <span className={s.framePlaceholder}>{waiting}</span>
     );
@@ -499,7 +588,7 @@ export function CompareView(props: {
           맞춘 것
         </button>
         <button type="button" aria-pressed={shown === "original"} onClick={() => set({ variant: "original" })}>
-          원본 장면
+          {photos ? "원본 사진" : "원본 장면"}
         </button>
       </div>
 
@@ -518,7 +607,7 @@ export function CompareView(props: {
             <figcaption className={s.caption}>
               {LABEL_CURRENT}
               <span className={s.captionSub}>
-                {variantLabel} · 동영상의 {props.timeText}
+                {variantLabel} · {where}
               </span>
             </figcaption>
           </figure>
@@ -545,15 +634,16 @@ export function CompareView(props: {
             <figcaption className={s.caption}>
               {LABEL_REFERENCE} 위에 {LABEL_CURRENT}
               <span className={s.captionSub}>
-                {variantLabel} · 동영상의 {props.timeText}
+                {variantLabel} · {where}
               </span>
             </figcaption>
           </figure>
         </div>
       )}
       <p className={s.small}>
-        맞춘 것은 회전·확대·이동만 했습니다. 좌우·위아래 각도와 원근은 바꾸지 않았고, 동영상에 찍히지 않은 곳은 회색으로 비워
-        둡니다. “동영상의 몇 초”는 근삿값입니다.
+        맞춘 것은 회전·확대·이동만 했습니다. 좌우·위아래 각도와 원근은 바꾸지 않았고, {photos ? "사진" : "동영상"}에 찍히지 않은
+        곳은 회색으로 비워 둡니다.{" "}
+        {photos ? "“몇 번째 사진”은 고른 파일을 이름 순으로 세운 차례입니다." : "“동영상의 몇 초”는 근삿값입니다."}
       </p>
     </div>
   );
@@ -564,11 +654,18 @@ export function CandidateStrip(props: {
   images: Record<number, CandidateImages>;
   /** 기준 사진의 가로÷세로. 작은 그림의 틀을 같은 모양으로 잡아 가로 사진이 잘리지 않게 한다. */
   aspect: number;
+  source?: SourceKind;
   onChoose: (rank: number) => void;
 }) {
   const thumbStyle = { aspectRatio: String(props.aspect > 0 ? props.aspect : 0.75) };
   if (props.candidates.length <= 1) {
-    return <p className={s.muted}>바꿔 볼 다른 후보가 없습니다. 기준 자세에서 잠깐 멈춘 구간이 있어야 후보가 생깁니다.</p>;
+    return (
+      <p className={s.muted}>
+        {props.source === "photos"
+          ? "바꿔 볼 다른 후보가 없습니다. 쓸 수 있는 사진이 한 장뿐입니다."
+          : "바꿔 볼 다른 후보가 없습니다. 기준 자세에서 잠깐 멈춘 구간이 있어야 후보가 생깁니다."}
+      </p>
+    );
   }
   return (
     <div className={s.candidates} role="group" aria-label="후보 장면">
@@ -773,6 +870,7 @@ export function ResultStep(props: {
   onPrepare: () => void;
 }) {
   const v = props.view;
+  const photos = v.source === "photos";
   // 보는 방법(나란히/겹쳐, 맞춘 것/원본, 진하기)은 후보를 바꿔도 그대로 둔다.
   const [compare, setCompare] = useState<CompareState>(COMPARE_INITIAL);
   // 1등조차 통과 기준을 넘으면, 사진을 보여 주기 전에 다시 찍기를 먼저 권한다.
@@ -787,10 +885,19 @@ export function ResultStep(props: {
       : v.warnings.shown;
   const trace = (
     <>
-      <h3>동영상이 지나간 방향</h3>
-      <TraceFigure plot={props.plot} passDeg={props.passDeg} />
+      <h3>{photos ? "사진들이 본 방향" : "동영상이 지나간 방향"}</h3>
+      <TraceFigure plot={props.plot} passDeg={props.passDeg} source={v.source} />
     </>
   );
+  // 사진 묶음에 대한 알림(읽지 못한 사진, 상한, 크기가 섞임). 조용히 넘기지 않고 판정 바로 아래에 둔다.
+  const inputNotices =
+    v.inputNotices.length > 0 ? (
+      <ul className={`${s.list} ${s.warn}`} aria-label="고른 사진 묶음에 대한 알림">
+        {v.inputNotices.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
+    ) : null;
 
   return (
     <section className={s.card} aria-labelledby="pick-result">
@@ -802,9 +909,11 @@ export function ResultStep(props: {
       </div>
       {props.hiddenDuringAnalysis ? (
         <p className={s.warn}>
-          분석하는 동안 화면이 꺼졌거나 다른 앱으로 갔습니다. 결과가 이상해 보이면 같은 동영상으로 다시 해 주세요.
+          분석하는 동안 화면이 꺼졌거나 다른 앱으로 갔습니다. 결과가 이상해 보이면 같은 {photos ? "사진들" : "동영상"}으로 다시 해
+          주세요.
         </p>
       ) : null}
+      {inputNotices}
 
       {holdBack ? (
         <>
@@ -858,6 +967,8 @@ export function ResultStep(props: {
             imageStatus={props.imageStatus}
             correctionAvailable={v.correctionAvailable}
             timeText={v.timeText}
+            whereText={v.whereText}
+            source={v.source}
             state={compare}
             onState={setCompare}
           />
@@ -870,7 +981,13 @@ export function ResultStep(props: {
 
           <h3>다른 후보로 바꾸기</h3>
           <p className={s.muted}>눈을 감았거나 표정이 다르면 다른 후보를 눌러 바꿉니다. 후보마다 따로 판정합니다.</p>
-          <CandidateStrip candidates={v.candidates} images={props.images} aspect={props.aspect} onChoose={props.onChoose} />
+          <CandidateStrip
+            candidates={v.candidates}
+            images={props.images}
+            aspect={props.aspect}
+            source={v.source}
+            onChoose={props.onChoose}
+          />
 
           <ul className={`${s.list} ${s.info}`}>
             {v.always.map((line) => (
@@ -899,7 +1016,7 @@ export function ResultStep(props: {
 
           <div className={s.actions}>
             <button type="button" className={s.btnSecondary} onClick={props.onRetake}>
-              다른 동영상으로 다시 하기
+              {photos ? "다른 사진들이나 동영상으로 다시 하기" : "다른 동영상으로 다시 하기"}
             </button>
           </div>
         </>
@@ -919,13 +1036,23 @@ export function StoppedStep(props: {
   failure: Failure;
   plot: TracePlot | null;
   passDeg: number;
+  /** 사진 묶음에 대한 알림(읽지 못한 사진 수 등). 동영상이면 없다. */
+  notices?: readonly string[];
   onRetake: () => void;
   onReset: () => void;
 }) {
+  const photos = props.failure.kind === "stop" && props.failure.source === "photos";
   return (
     <section className={s.card} aria-labelledby="pick-stopped">
       <h2 id="pick-stopped">④ 결과</h2>
       <FailureBox failure={props.failure} />
+      {props.notices && props.notices.length > 0 ? (
+        <ul className={`${s.list} ${s.warn}`} aria-label="고른 사진 묶음에 대한 알림">
+          {props.notices.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      ) : null}
       <div className={s.actions}>
         <button type="button" className={s.btn} onClick={props.onRetake}>
           {failureText(props.failure).action}
@@ -936,8 +1063,8 @@ export function StoppedStep(props: {
       </div>
       {props.plot && props.plot.points.length > 0 ? (
         <>
-          <h3>동영상이 지나간 방향</h3>
-          <TraceFigure plot={props.plot} passDeg={props.passDeg} />
+          <h3>{photos ? "사진들이 본 방향" : "동영상이 지나간 방향"}</h3>
+          <TraceFigure plot={props.plot} passDeg={props.passDeg} source={photos ? "photos" : "video"} />
         </>
       ) : null}
     </section>

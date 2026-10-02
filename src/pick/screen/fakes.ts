@@ -10,15 +10,48 @@
  */
 
 import { createHash } from "node:crypto";
+import { analyzePhotos } from "../burst";
 import type { TracePoint } from "../direction";
 import type { FrameMeasurement, FrameSize, Measured } from "../measure";
 import { analyze, type ScanPhase } from "../pipeline";
 import { crossSweep, synthFace, synthFrame, type SynthFrameOptions } from "../testkit";
-import type { ModelHandle, PickDeps, ReferenceHandle, RenderedCandidate, VideoHandle } from "./session";
+import type {
+  ModelHandle,
+  PhotoSetHandle,
+  PickDeps,
+  ReferenceHandle,
+  RenderedCandidate,
+  VideoHandle,
+} from "./session";
 
 export type FakeModel = ModelHandle & { id: number };
 export type FakeReference = ReferenceHandle & { id: number };
 export type FakeVideo = VideoHandle & { id: number; closed: boolean };
+export type FakePhotoSet = PhotoSetHandle & { id: number; closed: boolean; files: readonly Blob[] };
+
+/**
+ * 가짜 사진 한 장이 "재면 나오는 값". 얼굴 사진이 아니라 숫자다. `unreadable` 이면 브라우저가 풀지
+ * 못하는 파일(RAW·HEIC 등)을 흉내 낸다.
+ */
+export interface FakePhotoSpec extends Partial<Omit<SynthFrameOptions, "timeSec">> {
+  unreadable?: boolean;
+  /** 그 사진의 원본 크기. 없으면 묶음의 기본 크기. */
+  photoSize?: FrameSize;
+}
+
+const PHOTO_SPECS = new WeakMap<Blob, FakePhotoSpec>();
+
+/** 가짜 사진 파일. 이름이 붙은 Blob 이고, 내용은 이름뿐이다(얼굴 사진이 아니다). */
+export function fakePhoto(name: string, spec: FakePhotoSpec = {}): Blob {
+  const file = Object.assign(new Blob([`사진:${name}`]), { name });
+  PHOTO_SPECS.set(file, spec);
+  return file;
+}
+
+/** 가짜 사진의 이름(시험이 순서를 확인할 때 쓴다). */
+export function fakePhotoName(file: Blob): string {
+  return (file as Blob & { name?: string }).name ?? "";
+}
 
 /** 이름으로 알아보는 접착부 예외(브라우저 모듈을 끌어오지 않는다). */
 export function namedError(name: "ReferenceUnreadableError" | "VideoUnreadableError", message: string): Error {
@@ -57,6 +90,12 @@ export interface FakeOptions {
   beforeMeasure?: (t: number, phase: ScanPhase, count: number) => void | Promise<void>;
   /** 그림 그리기를 실패시킨다(부를 때마다 묻는다). */
   renderFails?: (requestedTimeSec: number) => boolean;
+  /** 사진 묶음의 기본 원본 크기. */
+  photoSize?: FrameSize;
+  /** 사진을 재기 직전에 불린다(순번, 단계). 여기서 예외를 던지면 분석이 그 예외로 끝난다. */
+  beforePhoto?: (photoNumber: number, phase: "coarse" | "remeasure") => void | Promise<void>;
+  /** 다시 잴 때 그 순번의 사진을 읽지 못하게 한다. */
+  photoUnreadableOnRemeasure?: (photoNumber: number) => boolean;
   now?: Date;
 }
 
@@ -69,6 +108,11 @@ export interface FakeLog {
   referencesOpened: number;
   referencesClosed: number;
   videos: FakeVideo[];
+  photoSets: FakePhotoSet[];
+  /** 사진을 풀어 잰 기록(순번, 단계, 파일 이름)과, 그때 다른 사진이 풀려 있었는지. */
+  photoMeasures: { photoNumber: number; phase: "coarse" | "remeasure"; name: string; overlapped: boolean }[];
+  /** 사진 그림 요청(순번, 파일 이름, 원본 사진 그림의 긴 변 상한). */
+  photoRenders: { photoNumber: number; name: string; hadGeometry: boolean; maxLongSidePx: number }[];
   /** 장면 뽑기 요청(시각)과, 그때 다른 뽑기가 끝나지 않았는지. */
   renders: { requestedTimeSec: number; overlapped: boolean; hadGeometry: boolean }[];
   /** 큰 그림을 놓은 기록. */
@@ -96,6 +140,9 @@ export function fakeBrowser(opts: FakeOptions = {}): {
     referencesOpened: 0,
     referencesClosed: 0,
     videos: [],
+    photoSets: [],
+    photoMeasures: [],
+    photoRenders: [],
     renders: [],
     releases: [],
     pngs: [],
@@ -114,8 +161,39 @@ export function fakeBrowser(opts: FakeOptions = {}): {
   const at = opts.at ?? sweep.at;
   const durationSec = opts.durationSec ?? sweep.durationSec;
   let rendering = 0;
+  let decoding = 0;
 
-  const deps: PickDeps<FakeModel, FakeReference, FakeVideo> = {
+  /** 가짜 그림 한 벌(원본·보정본·작은 그림). 동영상 장면과 사진이 함께 쓴다. */
+  const rendered = (requestedTimeSec: number, hasGeometry: boolean): RenderedCandidate => {
+    const urls = [url("original")];
+    const correctedUrl = hasGeometry ? url("corrected") : null;
+    if (correctedUrl) urls.push(correctedUrl);
+    let thumb: string | null = url("thumb");
+    let released = false;
+    return {
+      thumbUrl: thumb,
+      originalUrl: urls[0],
+      correctedUrl,
+      grabbedTimeSec: null,
+      async exportPng(kind, lines) {
+        if (released) throw new Error("놓은 그림에서 PNG 를 만들려 했습니다.");
+        if (kind === "corrected" && correctedUrl === null) throw new Error("보정본이 없습니다.");
+        log.pngs.push({ kind, requestedTimeSec, lines: [...lines] });
+        return new Blob([`${kind}@${requestedTimeSec}\n${lines.join("\n")}`], { type: "image/png" });
+      },
+      release(keepThumb) {
+        if (!released) for (const u of urls) revoke(u);
+        released = true;
+        log.releases.push({ requestedTimeSec, keepThumb });
+        if (!keepThumb && thumb) {
+          revoke(thumb);
+          thumb = null;
+        }
+      },
+    };
+  };
+
+  const deps: PickDeps<FakeModel, FakeReference, FakeVideo, FakePhotoSet> = {
     async loadModel(onProgress) {
       log.modelLoads++;
       onProgress("가짜 모델 받는 중…");
@@ -173,32 +251,66 @@ export function fakeBrowser(opts: FakeOptions = {}): {
         await Promise.resolve();
         log.renders.push({ requestedTimeSec, overlapped, hadGeometry: geometry !== null });
         if (opts.renderFails?.(requestedTimeSec)) throw new Error("가짜 그림 실패");
-        const urls = [url("original")];
-        const correctedUrl = geometry ? url("corrected") : null;
-        if (correctedUrl) urls.push(correctedUrl);
-        let thumb: string | null = url("thumb");
-        let released = false;
-        return {
-          thumbUrl: thumb,
-          originalUrl: urls[0],
-          correctedUrl,
-          grabbedTimeSec: null,
-          async exportPng(kind, lines) {
-            if (released) throw new Error("놓은 그림에서 PNG 를 만들려 했습니다.");
-            if (kind === "corrected" && correctedUrl === null) throw new Error("보정본이 없습니다.");
-            log.pngs.push({ kind, requestedTimeSec, lines: [...lines] });
-            return new Blob([`${kind}@${requestedTimeSec}\n${lines.join("\n")}`], { type: "image/png" });
-          },
-          release(keepThumb) {
-            if (!released) for (const u of urls) revoke(u);
-            released = true;
-            log.releases.push({ requestedTimeSec, keepThumb });
-            if (!keepThumb && thumb) {
-              revoke(thumb);
-              thumb = null;
-            }
-          },
-        };
+        return rendered(requestedTimeSec, geometry !== null);
+      } finally {
+        rendering--;
+      }
+    },
+
+    async openPhotos(files) {
+      await Promise.resolve();
+      const p: FakePhotoSet = {
+        id: log.photoSets.length + 1,
+        count: files.length,
+        files: [...files],
+        closed: false,
+        close() {
+          p.closed = true;
+        },
+      };
+      log.photoSets.push(p);
+      return p;
+    },
+
+    analyzePhotos: (_model, reference, photos, hooks) =>
+      analyzePhotos({
+        reference,
+        count: photos.count,
+        measurePhoto: async (photoNumber, phase) => {
+          const file = photos.files[photoNumber - 1];
+          const spec = PHOTO_SPECS.get(file) ?? {};
+          // 한 장씩 풀어야 한다: 다른 사진이 아직 풀려 있으면 겹친 것이다.
+          log.photoMeasures.push({ photoNumber, phase, name: fakePhotoName(file), overlapped: decoding > 0 });
+          decoding++;
+          try {
+            await opts.beforePhoto?.(photoNumber, phase);
+            if (spec.unreadable) return null;
+            if (phase === "remeasure" && opts.photoUnreadableOnRemeasure?.(photoNumber)) return null;
+            log.measures++;
+            const { unreadable: _u, photoSize, ...frame } = spec;
+            void _u;
+            return {
+              measured: synthFrame({ timeSec: photoNumber, ...frame }),
+              size: photoSize ?? opts.photoSize ?? { width: 4000, height: 6000 },
+            };
+          } finally {
+            decoding--;
+          }
+        },
+        yieldToUi: () => Promise.resolve(),
+        ...hooks,
+      }),
+
+    async renderPhoto(photos, photoNumber, geometry, maxLongSidePx): Promise<RenderedCandidate> {
+      const overlapped = rendering > 0;
+      rendering++;
+      try {
+        await Promise.resolve();
+        const name = fakePhotoName(photos.files[photoNumber - 1]);
+        log.photoRenders.push({ photoNumber, name, hadGeometry: geometry !== null, maxLongSidePx });
+        log.renders.push({ requestedTimeSec: photoNumber, overlapped, hadGeometry: geometry !== null });
+        if (opts.renderFails?.(photoNumber)) throw new Error("가짜 그림 실패");
+        return rendered(photoNumber, geometry !== null);
       } finally {
         rendering--;
       }

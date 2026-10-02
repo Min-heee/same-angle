@@ -11,6 +11,7 @@
 
 import type { ShotKind } from "../record";
 import { formatAngle } from "../messages";
+import type { SourceKind } from "../pipeline";
 import { RULES, type Rules } from "../rules";
 import type { Verdict } from "../select";
 import { SHOT_LABEL } from "./guide";
@@ -74,6 +75,8 @@ export interface BandInput {
   shotKind: ShotKind;
   date: Date;
   rules?: Rules;
+  /** 입력의 종류. 없으면 동영상. 사진 여러 장이면 원본 쪽 줄이 달라진다. */
+  source?: SourceKind;
 }
 
 /** 통과 기준을 넘은 장면에 새기는 표시. 가까운 장면이면 null. */
@@ -87,11 +90,13 @@ export function notCloseMark(verdict: Verdict, noCloseScene: boolean, angleDeg: 
 /** 띠에 새길 줄들. 위에서 아래로. */
 export function bandLines(input: BandInput): string[] {
   const lines = [BAND_NOTICE];
-  lines.push(
-    input.kind === "corrected"
-      ? "보정본: 기울기·크기·위치 맞춤(회전·확대·이동만)"
-      : "원본 장면: 동영상의 한 장면 그대로(보정 없음)",
-  );
+  const rules = input.rules ?? RULES;
+  // 사진 여러 장에서 고른 원본은 긴 변 상한까지 줄여 그린 것일 수 있다. "그대로"라고 적지 않는다.
+  const original =
+    input.source === "photos"
+      ? `원본 사진: 고른 사진(보정 없음, 크면 긴 변 ${rules.photos.outputMaxLongSidePx}px 로 줄임)`
+      : "원본 장면: 동영상의 한 장면 그대로(보정 없음)";
+  lines.push(input.kind === "corrected" ? "보정본: 기울기·크기·위치 맞춤(회전·확대·이동만)" : original);
   const mark = notCloseMark(input.verdict, input.noCloseScene, input.angleDeg, input.rules);
   if (mark !== null) lines.push(mark);
   lines.push(`같은각도 · ${SHOT_LABEL[input.shotKind]} · ${dateLabel(input.date)}`);

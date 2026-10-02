@@ -8,7 +8,7 @@
  * 그때의 경계값으로 다시 판정된다(record.ts).
  */
 
-export const RULES_VERSION = "pick-0.3.0";
+export const RULES_VERSION = "pick-0.3.1";
 
 export const RULES = {
   /** 재는 방식. 기준 사진·모든 장면·다시 재기에 똑같이 쓴다. */
@@ -108,6 +108,18 @@ export const RULES = {
     maxResidual: 0.04,
     /** 한 번에 펼쳐 보이는 경고 수. 나머지는 접는다. */
     maxShown: 3,
+  },
+  /**
+   * 사진 여러 장(연사)에서 고를 때만 쓰는 값(PRD v0.3.1 5절 "사진 여러 장에서 고를 때 달라지는 점").
+   * 동영상에서 고를 때는 쓰지 않는다.
+   */
+  photos: {
+    /** 한 번에 보는 사진 수의 상한. 넘으면 순번이 앞인 사진부터 이만큼만 본다. */
+    maxCount: 60,
+    /** 가장 많은 크기와 가로·세로가 다른 사진이 이 장수를 넘으면 알린다(0 = 한 장이라도 있으면). */
+    maxSizeMismatch: 0,
+    /** 보정본과 원본 사진 그림의 긴 변 상한(px). 동영상의 `output.maxLongSidePx` 대신 쓴다. */
+    outputMaxLongSidePx: 4096,
   },
 } as const;
 

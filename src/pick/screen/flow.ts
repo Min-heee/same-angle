@@ -1,7 +1,11 @@
 /**
  * 고르기 화면의 상태와 그 바뀜(리듀서). 화면은 이 상태만 그린다.
  *
- * 흐름: ① 기준 사진 → ② 동영상 → ③ 분석 → ④ 결과·저장(저장은 결과 화면 맨 아래에 있다).
+ * 흐름: ① 기준 사진 → ② 동영상(또는 사진 여러 장) → ③ 분석 → ④ 결과·저장(저장은 결과 화면 맨 아래에 있다).
+ *
+ * ② 의 입력은 둘 가운데 하나다(PRD v0.3.1): 동영상 1개 또는 연사로 찍은 사진 여러 장. 상태의
+ * `video` 칸이 그 입력 자리이고, 사진 묶음이 들어오면 `status` 가 "photos" 가 된다. 그 뒤의 흐름
+ * (분석 → 결과 → 다시 찍기 → 저장)은 같다.
  *
  * 여기서 지키는 규칙:
  *  - 기준 사진을 바꾸면 동영상·분석·다시 찍은 횟수·메모가 전부 비워진다(다른 사진의 결과가 남지 않는다).
@@ -49,6 +53,19 @@ export interface VideoInfo {
   fileModifiedAt: string | null;
 }
 
+/** 사진 여러 장(연사) 입력. 사진마다의 크기와 읽지 못한 수는 분석 결과(`analysis.photos`)에 있다. */
+export interface PhotoSetInfo {
+  /** 고른 파일 수. */
+  selected: number;
+  /** 실제로 보는 수(상한을 적용한 뒤). 순번은 1 부터 이 수까지다. */
+  used: number;
+  /**
+   * 순번 순서의 파일 이름(`names[순번 − 1]`). **화면에만 보인다.** 기록(JSON)과 저장 파일 이름에는
+   * 넣지 않는다 — 환자 이름이 들어 있을 수 있다.
+   */
+  names: string[];
+}
+
 export type PickedAnalysis = Extract<AnalysisResult, { kind: "picked" }>;
 export type StoppedAnalysis = Extract<AnalysisResult, { kind: "stopped" }>;
 
@@ -89,6 +106,8 @@ export interface PickState {
     | { status: "empty" }
     | { status: "opening" }
     | { status: "ready"; info: VideoInfo }
+    /** 동영상 대신 사진 여러 장이 들어왔다. */
+    | { status: "photos"; set: PhotoSetInfo }
     | { status: "failed"; failure: Failure };
   analysis:
     | { status: "idle" }
@@ -121,6 +140,7 @@ export type Action =
   | { type: "step"; step: "reference" | "video" }
   | { type: "video/opening" }
   | { type: "video/ready"; info: VideoInfo }
+  | { type: "photos/ready"; set: PhotoSetInfo }
   | { type: "video/failed"; failure: Failure }
   | { type: "analysis/progress"; progress: Progress }
   | { type: "analysis/quick"; quickAnswer: QuickAnswerInfo }
@@ -218,6 +238,14 @@ export function reduce(s: PickState, a: Action): PickState {
             analysis: { status: "running", progress: null, quickAnswer: null, cancelling: false },
           }
         : s;
+    case "photos/ready":
+      return s.video.status === "opening"
+        ? {
+            ...s,
+            video: { status: "photos", set: a.set },
+            analysis: { status: "running", progress: null, quickAnswer: null, cancelling: false },
+          }
+        : s;
     case "video/failed":
       return s.video.status === "opening" ? { ...s, step: "video", video: { status: "failed", failure: a.failure } } : s;
 
@@ -238,8 +266,8 @@ export function reduce(s: PickState, a: Action): PickState {
         : s;
     case "analysis/done": {
       if (s.analysis.status !== "running") return s;
-      // 동영상을 읽지 못해 멈춘 것(S3)은 끝까지 간 분석이 아니다.
-      const completed = !(a.result.kind === "stopped" && a.result.stop === "S3");
+      // 동영상을 읽지 못해 멈춘 것(S3), 사진을 한 장도 읽지 못해 멈춘 것(S6)은 끝까지 간 분석이 아니다.
+      const completed = !(a.result.kind === "stopped" && (a.result.stop === "S3" || a.result.stop === "S6"));
       return {
         ...s,
         step: "result",
@@ -290,6 +318,11 @@ export function reduce(s: PickState, a: Action): PickState {
 /** 지금 결과가 "고름"이면 그 분석을, 아니면 null. */
 export function pickedOf(s: PickState): PickedAnalysis | null {
   return s.analysis.status === "done" && s.analysis.result.kind === "picked" ? s.analysis.result : null;
+}
+
+/** 지금 입력이 사진 여러 장이면 그 정보를, 아니면 null. */
+export function photoSetOf(s: Pick<PickState, "video">): PhotoSetInfo | null {
+  return s.video.status === "photos" ? s.video.set : null;
 }
 
 /** 다시 찍은 횟수: 끝까지 간 분석 수 − 1. 첫 동영상은 다시 찍은 것이 아니다. */

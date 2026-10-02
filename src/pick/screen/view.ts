@@ -11,9 +11,10 @@
  * 순수 함수다.
  */
 
+import { photoNumberOf } from "../burst";
 import { anchorQuality } from "../compare";
 import { viewToTrace, type TracePoint } from "../direction";
-import { judgeCandidate, type CandidateJudgement, type JudgeContext } from "../judge";
+import { judgeCandidate, photoJudgeContext, type CandidateJudgement, type JudgeContext } from "../judge";
 import type { FaceReading, FrameSize, Measured } from "../measure";
 import {
   ALWAYS_SHOWN,
@@ -21,11 +22,12 @@ import {
   formatAngle,
   formatPercent,
   formatRatio,
+  photoSetNotices,
   quickAnswerMessage,
   splitWarnings,
   warningMessage,
 } from "../messages";
-import type { Candidate, Progress, QuickAnswerInfo, TraceEntry } from "../pipeline";
+import type { Candidate, Progress, QuickAnswerInfo, SourceKind, TraceEntry } from "../pipeline";
 import { RULES, type Rules } from "../rules";
 import type { Verdict } from "../select";
 import type { PickedAnalysis } from "./flow";
@@ -46,6 +48,41 @@ export interface ResultInput {
   analysis: PickedAnalysis;
   chosenRank: number;
   rules?: Rules;
+}
+
+/** 사진 여러 장에서 고른 결과를 그릴 때의 입력. 사진마다의 크기는 `analysis.photos` 에 있다. */
+export interface PhotoResultInput {
+  reference: Measured & { face: FaceReading };
+  referenceOriginal: FrameSize;
+  /** 고른 파일 수와, 순번 순서의 파일 이름(화면에만 보인다). */
+  photos: { selected: number; names: readonly string[] };
+  analysis: PickedAnalysis;
+  chosenRank: number;
+  rules?: Rules;
+}
+
+/** 입력원: 동영상이면 그 해상도와 길이, 사진 여러 장이면 "photos". */
+export type SourceInput = { videoNative: FrameSize; videoDurationSec: number } | "photos";
+
+/**
+ * 후보 하나의 판정 맥락. 동영상이면 모든 후보가 같은 해상도·길이를 쓰고, 사진 여러 장이면 후보마다
+ * 그 사진의 원본 크기를 쓴다(묶음에 크기가 다른 사진이 섞여 있을 수 있다). 만들 수 없으면 null.
+ */
+export function contextForCandidate(
+  base: Pick<JudgeContext, "reference" | "referenceOriginal">,
+  source: SourceInput,
+  analysis: PickedAnalysis,
+  candidate: Candidate,
+  rules: Rules = RULES,
+): JudgeContext | null {
+  if (source !== "photos") return { ...base, videoNative: source.videoNative, videoDurationSec: source.videoDurationSec };
+  const size = analysis.photos?.sizes[photoNumberOf(candidate.measurement.timeSec) - 1] ?? null;
+  return size ? photoJudgeContext(base, size, rules) : null;
+}
+
+/** "7번째 사진(IMG_0007.JPG)". 파일 이름을 모르면 순번만. 파일 이름은 화면에만 쓴다. */
+export function photoLabel(photoNumber: number, name?: string | null): string {
+  return name ? `${photoNumber}번째 사진(${name})` : `${photoNumber}번째 사진`;
 }
 
 export function judgeContextOf(input: Omit<ResultInput, "analysis" | "chosenRank" | "rules">): JudgeContext {
@@ -107,6 +144,12 @@ export interface NumberRow {
 }
 
 export interface ResultView {
+  /** 입력의 종류. 화면이 "동영상"·"사진" 낱말을 고르는 데 쓴다. */
+  source: SourceKind;
+  /** 지금 보는 장면의 자리: "동영상의 약 3.4초" 또는 "7번째 사진(파일 이름)". */
+  whereText: string;
+  /** 사진 묶음에 대한 알림(읽지 못한 사진, 상한을 넘겨 보지 않은 사진, 크기가 다른 사진). 동영상이면 비어 있다. */
+  inputNotices: string[];
   /** 지금 보고 있는 후보의 판정. */
   verdict: Verdict;
   /** 동영상 전체의 판정: 1등조차 통과 기준을 넘으면 true. */
@@ -145,9 +188,10 @@ const KEY_ROW_LABELS: readonly string[] = ["각도 차", "맞춘 기울기", "�
 const size = (s: FrameSize) => `${s.width}×${s.height}`;
 const fixed = (v: number | null, d: number) => (v === null || !Number.isFinite(v) ? "—" : v.toFixed(d));
 
-function chipOf(c: Candidate, chosenRank: number, rules: Rules): CandidateChip {
+function chipOf(c: Candidate, chosenRank: number, rules: Rules, photos: boolean): CandidateChip {
   const angleText = formatAngle(c.comparison.angleDeg, rules.select.passDeg);
-  const timeText = timeLabel(c.measurement.timeSec);
+  // 후보 조각은 좁다. 사진 묶음에서는 순번만 적고, 파일 이름은 지금 보는 사진의 자리 표시에 적는다.
+  const timeText = photos ? photoLabel(photoNumberOf(c.measurement.timeSec)) : timeLabel(c.measurement.timeSec);
   const name = c.rank === 1 ? NAME_WINNER : `후보 ${c.rank - 1}`;
   const chosen = c.rank === chosenRank;
   // 통과 기준을 넘는 후보에는 "가까운 장면"이라는 말을 붙이지 않는다.
@@ -165,13 +209,23 @@ function chipOf(c: Candidate, chosenRank: number, rules: Rules): CandidateChip {
 }
 
 /** 결과 화면이 그릴 것 전부. 후보를 바꾸면 그 순위로 다시 부른다. */
-export function resultView(input: ResultInput): ResultView | null {
+export function resultView(input: ResultInput | PhotoResultInput): ResultView | null {
   const rules = input.rules ?? RULES;
   const a = input.analysis;
   const chosen = candidateOf(a, input.chosenRank);
   if (chosen === null) return null;
 
-  const ctx = judgeContextOf(input);
+  const photoInput = "photos" in input ? input.photos : null;
+  const source: SourceKind = photoInput ? "photos" : "video";
+  const base = { reference: input.reference, referenceOriginal: input.referenceOriginal };
+  const ctx = contextForCandidate(base, "photos" in input ? "photos" : input, a, chosen, rules);
+  if (ctx === null) return null;
+  /** 지금 보는 장면의 원본 크기: 동영상 해상도 또는 그 사진의 크기. */
+  const native = ctx.videoNative;
+  const photoNumber = photoNumberOf(chosen.measurement.timeSec);
+  const whereText = photoInput
+    ? photoLabel(photoNumber, photoInput.names[photoNumber - 1])
+    : `동영상의 ${timeLabel(chosen.measurement.timeSec)}`;
   const j = judgeOf(chosen, ctx, rules);
   const n = j.numbers;
   const pass = rules.select.passDeg;
@@ -189,7 +243,7 @@ export function resultView(input: ResultInput): ResultView | null {
       : `각도 차 ${angleText} · 통과 기준 ${pass}°를 넘습니다`;
 
   const messages = (codes: readonly (typeof j.warnings)[number][]) =>
-    codes.map((code) => warningMessage(code, { numbers: n, videoNative: input.videoNative }, rules));
+    codes.map((code) => warningMessage(code, { numbers: n, videoNative: native, source }, rules));
   const split = splitWarnings(j.warnings, rules);
 
   const notes: string[] = [];
@@ -198,7 +252,9 @@ export function resultView(input: ResultInput): ResultView | null {
     notes.push("기준 사진에서 얼굴 점들이 좁게 모여 있어 기울기·크기 맞춤이 덜 정확할 수 있습니다.");
   }
   if (j.output === null) notes.push("기준 사진의 크기를 알 수 없어 보정본을 만들지 못했습니다. 원본 장면만 보입니다.");
-  if (a.remeasureDropped > 0) notes.push(`다시 쟀더니 쓸 수 없게 된 장면 ${a.remeasureDropped}장을 버렸습니다.`);
+  if (a.remeasureDropped > 0) {
+    notes.push(`다시 쟀더니 쓸 수 없게 된 ${photoInput ? "사진" : "장면"} ${a.remeasureDropped}장을 버렸습니다.`);
+  }
 
   const c = chosen.comparison;
   const sharpRatio =
@@ -207,7 +263,13 @@ export function resultView(input: ResultInput): ResultView | null {
       : null;
   const rows: NumberRow[] = [
     { label: "각도 차", value: angleText, hint: `통과 기준 ${pass}° 이하. 찍은 뒤에는 고칠 수 없습니다` },
-    { label: "고른 시각", value: `동영상의 ${timeLabel(chosen.measurement.timeSec)}`, hint: "근삿값입니다" },
+    photoInput
+      ? {
+          label: "고른 사진",
+          value: whereText,
+          hint: `본 ${a.photos?.count ?? photoInput.selected}장 가운데. 순번은 파일 이름 순입니다`,
+        }
+      : { label: "고른 시각", value: whereText, hint: "근삿값입니다" },
     { label: "고른 순서", value: switched ? `사람이 바꾼 후보(${chosen.rank}번째)` : "도구가 고른 1등" },
     { label: "맞춘 기울기", value: `${Math.abs(c.rotationDeg).toFixed(1)}°`, hint: "회전으로 맞춘 양" },
     {
@@ -215,7 +277,11 @@ export function resultView(input: ResultInput): ResultView | null {
       value: `${formatRatio(1 / c.frameScale)}배`,
       hint: "이번 장면의 얼굴이 화면에서 차지하는 크기 ÷ 기준 사진",
     },
-    { label: "늘려 그린 배율", value: n.qualityScale === null ? "—" : `${formatRatio(n.qualityScale)}배`, hint: "장면의 한 픽셀이 보정본에서 몇 픽셀인가" },
+    {
+      label: "늘려 그린 배율",
+      value: n.qualityScale === null ? "—" : `${formatRatio(n.qualityScale)}배`,
+      hint: photoInput ? "고른 사진의 한 픽셀이 보정본에서 몇 픽셀인가" : "장면의 한 픽셀이 보정본에서 몇 픽셀인가",
+    },
     { label: "위치 차", value: formatPercent(c.position), hint: "화면 짧은 변 대비" },
     { label: "맞춘 뒤 남는 어긋남", value: formatPercent(c.residual), hint: "눈 사이 거리 대비" },
     { label: "선명도", value: sharpRatio === null ? "—" : `기준 사진의 ${formatRatio(sharpRatio)}배` },
@@ -232,14 +298,22 @@ export function resultView(input: ResultInput): ResultView | null {
     },
     { label: "다시 잰 방향 차", value: n.remeasureShiftDeg === null ? "—" : `${n.remeasureShiftDeg.toFixed(2)}°` },
     { label: "기준 사진 해상도", value: size(input.referenceOriginal) },
-    { label: "동영상 해상도", value: size(input.videoNative), hint: "동영상 장면은 사진보다 화질이 낮습니다" },
+    photoInput
+      ? { label: "고른 사진 해상도", value: size(native), hint: "보정본은 이보다 작을 수 있습니다. 온전한 화소는 원본 파일에 있습니다" }
+      : { label: "동영상 해상도", value: size(native), hint: "동영상 장면은 사진보다 화질이 낮습니다" },
     { label: "보정본 크기", value: j.output ? size(j.output.size) : "—" },
+    photoInput
+      ? {
+          label: "잰 사진",
+          value: `${a.measured.coarse}장(+다시 잰 ${a.measured.remeasure}장)`,
+          hint: `고른 ${photoInput.selected}장 가운데`,
+        }
+      : {
+          label: "잰 장면",
+          value: `${a.measured.coarse + a.measured.fine}장(+다시 잰 ${a.measured.remeasure}장)`,
+        },
     {
-      label: "잰 장면",
-      value: `${a.measured.coarse + a.measured.fine}장(+다시 잰 ${a.measured.remeasure}장)`,
-    },
-    {
-      label: "뺀 장면",
+      label: photoInput ? "뺀 사진" : "뺀 장면",
       value: `${a.excluded.total}장`,
       // 0장인 사유는 적지 않는다. 얼굴이 둘 이상이던 장면은 "얼굴 없음"과 따로 적는다.
       hint: exclusionSummary(a.excluded, a.multipleFaces) || undefined,
@@ -249,14 +323,20 @@ export function resultView(input: ResultInput): ResultView | null {
   const moreRows = rows.filter((r) => !KEY_ROW_LABELS.includes(r.label));
 
   return {
+    source,
+    whereText,
+    inputNotices:
+      photoInput && a.photos
+        ? photoSetNotices(a.photos, photoInput.selected, a.photos.count, rules)
+        : [],
     verdict: j.verdict,
     noCloseScene,
     title,
     summary,
     angleText,
     retakeAdvice:
-      j.verdict === "close" ? null : warningMessage("W1", { numbers: n, videoNative: input.videoNative }, rules),
-    timeText: timeLabel(chosen.measurement.timeSec),
+      j.verdict === "close" ? null : warningMessage("W1", { numbers: n, videoNative: native, source }, rules),
+    timeText: photoInput ? photoLabel(photoNumber) : timeLabel(chosen.measurement.timeSec),
     switched,
     correctionAvailable: j.output !== null,
     warnings: { shown: messages(split.shown), folded: messages(split.folded) },
@@ -264,7 +344,7 @@ export function resultView(input: ResultInput): ResultView | null {
     rows,
     keyRows,
     moreRows,
-    candidates: candidatesOf(a).map((cand) => chipOf(cand, input.chosenRank, rules)),
+    candidates: candidatesOf(a).map((cand) => chipOf(cand, input.chosenRank, rules, photoInput !== null)),
     always: ALWAYS_SHOWN,
     judgement: j,
   };
@@ -297,8 +377,35 @@ const PHASE_SPAN: Record<Progress["phase"], readonly [number, number]> = {
   remeasure: [0.92, 0.08],
 };
 
-export function progressView(progress: Progress | null, quickAnswer: QuickAnswerInfo | null): ProgressView {
+/** 사진 여러 장: 훑기가 한 번뿐이라 몫이 다르다. 촘촘히 훑기는 없다. */
+const PHOTO_PHASE_LABEL: Record<Progress["phase"], string> = {
+  coarse: "사진을 한 장씩 재는 중",
+  fine: "사진을 한 장씩 재는 중",
+  remeasure: "고른 사진을 다시 재는 중",
+};
+const PHOTO_PHASE_SPAN: Record<Progress["phase"], readonly [number, number]> = {
+  coarse: [0, 0.9],
+  fine: [0, 0.9],
+  remeasure: [0.9, 0.1],
+};
+
+export function progressView(
+  progress: Progress | null,
+  quickAnswer: QuickAnswerInfo | null,
+  source: SourceKind = "video",
+): ProgressView {
   const quick = quickAnswer ? quickAnswerMessage(quickAnswer.answer) : null;
+  if (source === "photos") {
+    if (progress === null) return { label: "사진을 준비하는 중", count: null, fraction: 0, quick: null };
+    const [start, span] = PHOTO_PHASE_SPAN[progress.phase];
+    const part = progress.total > 0 ? Math.min(1, Math.max(0, progress.done / progress.total)) : 0;
+    return {
+      label: PHOTO_PHASE_LABEL[progress.phase],
+      count: `${progress.total}장 중 ${progress.done}장`,
+      fraction: Math.min(1, start + span * part),
+      quick: null,
+    };
+  }
   if (progress === null) return { label: "동영상을 여는 중", count: null, fraction: 0, quick };
   const [start, span] = PHASE_SPAN[progress.phase];
   const part = progress.total > 0 ? Math.min(1, Math.max(0, progress.done / progress.total)) : 0;
@@ -437,7 +544,10 @@ export function holdBackView(
   view: Pick<ResultView, "angleText" | "retakeAdvice">,
   retakeCount: number,
   retakeLimit: number,
+  source: SourceKind = "video",
 ): HoldBackView {
+  // 다시 찍기는 ② 로 돌아가는 것이라 어느 쪽으로든 다시 찍을 수 있다. 낱말만 들어온 입력에 맞춘다.
+  const what = source === "photos" ? "사진들" : "동영상";
   const nearest = `가장 가까운 장면은 ${view.angleText} 차이입니다.`;
   const noDirection = "어느 쪽으로 더 움직여야 하는지는 아직 말해 주지 못합니다. 아래 그림에서 얼마나 빗나갔는지만 볼 수 있습니다.";
   if (retakeCount < retakeLimit) {
@@ -445,7 +555,7 @@ export function holdBackView(
       exhausted: false,
       // 엔진의 W1 문장 그대로("가장 가까운 장면은 N° 차이입니다. 다시 찍기를 권합니다.").
       message: `${view.retakeAdvice ?? `${nearest} 다시 찍기를 권합니다.`} ${noDirection}`,
-      primary: { action: "retake", label: "다시 찍은 동영상 고르기" },
+      primary: { action: "retake", label: `다시 찍은 ${what} 고르기` },
       secondary: { action: "show", label: "그래도 가장 가까운 장면 보기" },
     };
   }
@@ -453,6 +563,6 @@ export function holdBackView(
     exhausted: true,
     message: `${nearest} ${retakeCount}번 다시 찍었습니다. 더 찍지 않아도 됩니다. 가장 가까운 장면을 보고, 사유를 골라 “가까운 장면 없음” 표시 그대로 저장해 주세요.`,
     primary: { action: "show", label: "가장 가까운 장면 보고 저장하기" },
-    secondary: { action: "retake", label: "한 번 더 찍은 동영상 고르기" },
+    secondary: { action: "retake", label: `한 번 더 찍은 ${what} 고르기` },
   };
 }

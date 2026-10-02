@@ -13,6 +13,7 @@ import type { ExclusionCounts } from "../exclude";
 import type { StopCode } from "../judge";
 import type { FaceFailure } from "../measure";
 import { stopMessage } from "../messages";
+import type { SourceKind } from "../pipeline";
 
 export type Failure =
   | {
@@ -23,6 +24,8 @@ export type Failure =
       /** `excluded.X1` 가운데 얼굴이 둘 이상이어서 뺀 장면 수. */
       multipleFaces?: number;
       detail?: string;
+      /** 사진 여러 장에서 고르다 멈춘 것이면 "photos". 없으면 동영상. 문장과 다음 행동의 낱말이 달라진다. */
+      source?: SourceKind;
     }
   /** 얼굴 모델(실행 파일·모델 파일)을 받거나 켜지 못함. */
   | { kind: "model"; detail: string }
@@ -75,7 +78,11 @@ const ACTION: Record<StopCode, string> = {
   S3: "다른 동영상 고르기",
   S4: "다시 찍은 동영상 고르기",
   S5: "다른 사진 고르기",
+  S6: "다른 사진들 고르기",
 };
+
+/** 사진 여러 장에서 고르다 "쓸 수 있는 사진 없음"으로 멈췄을 때의 다음 행동. */
+const ACTION_S4_PHOTOS = "다시 찍은 사진들 고르기";
 
 const REASON_NOTE: Partial<Record<FaceFailure, string>> = {
   matrixUnreadable: "얼굴은 찾았지만 얼굴의 방향을 읽지 못했습니다.",
@@ -86,6 +93,7 @@ const STOP_NOTE: Partial<Record<StopCode, string>> = {
   S1: "정수리·뒤통수처럼 얼굴이 보이지 않는 사진은 이 도구로 맞출 수 없습니다.",
   S3: "아이폰 기본 형식(HEVC)은 노트북 브라우저에서 열리지 않을 수 있습니다.",
   S5: "아이폰 기본 형식(HEIC)은 노트북 브라우저에서 열리지 않을 수 있습니다.",
+  S6: "RAW 파일은 브라우저가 열지 못하고, HEIC 는 브라우저에 따라 열리지 않을 수 있습니다.",
 };
 
 /** 다른 얼굴이 함께 찍혀 빠진 장면이 있을 때 덧붙이는 설명(찍기 전 확인의 둘째 줄과 같은 내용). */
@@ -98,8 +106,8 @@ export function failureText(f: Failure): FailureText {
       const multi = f.code === "S4" && (f.multipleFaces ?? 0) > 0 ? OTHER_FACE_NOTE : undefined;
       const note = (f.reason ? REASON_NOTE[f.reason] : undefined) ?? multi ?? STOP_NOTE[f.code] ?? null;
       return {
-        message: stopMessage(f.code, f.excluded, f.multipleFaces),
-        action: ACTION[f.code],
+        message: stopMessage(f.code, f.excluded, f.multipleFaces, f.source),
+        action: f.code === "S4" && f.source === "photos" ? ACTION_S4_PHOTOS : ACTION[f.code],
         note,
         detail: f.detail ?? null,
       };

@@ -3,6 +3,9 @@
 /**
  * 고르기 화면(/pick/)의 껍데기: 접착부(`session.ts`)를 만들고, 상태를 조각(`parts.tsx`)에 나눠 준다.
  *
+ * ② 의 입력은 동영상 1개 또는 연사로 찍은 사진 여러 장이다(PRD v0.3.1). 어느 쪽이든 그 뒤의 화면은 같고,
+ * 낱말("동영상의 약 N초" ↔ "N번째 사진(파일 이름)")만 `view.ts` 가 골라 준다.
+ *
  * 이 화면은 **카메라 권한을 묻지 않는다.** 파일만 받는다("지금 바로 찍기"는 폰의 카메라 앱이
  * 찍어서 파일로 넘겨주는 것이고, 브라우저가 카메라를 여는 것이 아니다 — 실기기 확인 전).
  *
@@ -14,9 +17,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { installFetchGuard } from "@/spike/netguard";
 import { viewToTrace } from "../direction";
+import { photoSetNotices } from "../messages";
 import { RULES } from "../rules";
 import { browserDeps } from "./browser";
-import { RETAKE_LIMIT, hasUnsavedWork, pickedOf, retakeCountOf } from "./flow";
+import { RETAKE_LIMIT, hasUnsavedWork, photoSetOf, pickedOf, retakeCountOf } from "./flow";
 import { AnalyzingStep, ReferenceStep, ResultStep, Stepper, StoppedStep, VideoStep } from "./parts";
 import s from "./pick.module.css";
 import { createPickSession, type PickSession } from "./session";
@@ -81,21 +85,28 @@ function PickScreen({ session }: { session: PickSession }) {
 
   const refInfo = state.reference.status === "ready" ? state.reference.info : null;
   const vidInfo = state.video.status === "ready" ? state.video.info : null;
+  const photoSet = photoSetOf(state);
   const picked = pickedOf(state);
   const passDeg = RULES.select.passDeg;
   const retakeCount = retakeCountOf(state);
 
   const view = useMemo(() => {
-    if (!picked || !refInfo || !vidInfo || state.chosenRank === null) return null;
-    return resultView({
+    if (!picked || !refInfo || state.chosenRank === null) return null;
+    const base = {
       reference: refInfo.measured,
       referenceOriginal: { width: refInfo.width, height: refInfo.height },
-      videoNative: { width: vidInfo.width, height: vidInfo.height },
-      videoDurationSec: vidInfo.durationSec,
       analysis: picked,
       chosenRank: state.chosenRank,
+    };
+    // 사진 여러 장: 파일 이름은 여기(화면)까지만 온다. 사진마다의 크기는 분석 결과에 있다.
+    if (photoSet) return resultView({ ...base, photos: { selected: photoSet.selected, names: photoSet.names } });
+    if (!vidInfo) return null;
+    return resultView({
+      ...base,
+      videoNative: { width: vidInfo.width, height: vidInfo.height },
+      videoDurationSec: vidInfo.durationSec,
     });
-  }, [picked, refInfo, vidInfo, state.chosenRank]);
+  }, [picked, refInfo, vidInfo, photoSet, state.chosenRank]);
 
   const plot = useMemo(() => {
     if (!refInfo || state.analysis.status !== "done") return null;
@@ -137,6 +148,7 @@ function PickScreen({ session }: { session: PickSession }) {
         cancelled={state.analysis.status === "cancelled"}
         retakeCount={retakeCount}
         onFile={(file) => void session.chooseVideo(file)}
+        onPhotos={(files) => void session.choosePhotos(files)}
         onBack={session.backToReference}
       />
     );
@@ -146,7 +158,8 @@ function PickScreen({ session }: { session: PickSession }) {
     body = (
       <AnalyzingStep
         video={vidInfo}
-        progress={progressView(a?.progress ?? null, a?.quickAnswer ?? null)}
+        photos={photoSet}
+        progress={progressView(a?.progress ?? null, a?.quickAnswer ?? null, photoSet ? "photos" : "video")}
         cancelling={a?.cancelling ?? false}
         truncatedSec={tooLong ? RULES.sampling.maxDurationSec : null}
         onCancel={session.cancel}
@@ -166,7 +179,7 @@ function PickScreen({ session }: { session: PickSession }) {
         hiddenDuringAnalysis={state.hiddenDuringAnalysis}
         plot={plot}
         gate={saveGate(view.verdict, retakeCount, RETAKE_LIMIT)}
-        holdBack={holdBackView(view, retakeCount, RETAKE_LIMIT)}
+        holdBack={holdBackView(view, retakeCount, RETAKE_LIMIT, view.source)}
         memo={state.memo}
         retakeReason={state.retakeReason}
         exportState={state.exportState}
@@ -183,7 +196,14 @@ function PickScreen({ session }: { session: PickSession }) {
     const r = state.analysis.result;
     body = (
       <StoppedStep
-        failure={{ kind: "stop", code: r.stop, excluded: r.excluded, multipleFaces: r.multipleFaces }}
+        failure={{
+          kind: "stop",
+          code: r.stop,
+          excluded: r.excluded,
+          multipleFaces: r.multipleFaces,
+          source: photoSet ? "photos" : undefined,
+        }}
+        notices={photoSet && r.photos ? photoSetNotices(r.photos, photoSet.selected, photoSet.used) : undefined}
         plot={plot}
         passDeg={passDeg}
         onRetake={session.retake}
@@ -240,7 +260,8 @@ export default function PickApp() {
         </Link>
         <h1>동영상에서 같은 각도 사진 고르기</h1>
         <p className={s.lede}>
-          지난번 사진과 가장 가까운 장면을 동영상에서 골라, 기울기·크기·위치를 맞춰 줍니다. 얼굴이 보이는 사진만 됩니다.
+          지난번 사진과 가장 가까운 장면을 동영상(또는 연사로 찍은 사진 여러 장)에서 골라, 기울기·크기·위치를 맞춰 줍니다.
+          얼굴이 보이는 사진만 됩니다.
         </p>
       </header>
 
@@ -249,7 +270,7 @@ export default function PickApp() {
       <footer className={s.footer}>
         <p>사진과 동영상은 이 기기 안에서만 처리합니다. 얼굴을 찾는 프로그램 파일만 처음 한 번 받습니다(모델 파일은 Google 서버에서).</p>
         <p>의료기기가 아닙니다. 모발·두피 상태나 치료 효과를 판단하지 않습니다.</p>
-        <p>실제 얼굴 동영상으로 검증하기 전입니다. 숫자와 기준값은 전부 초깃값입니다.</p>
+        <p>실제 얼굴 동영상과 실제 카메라의 연사 사진으로 검증하기 전입니다. 숫자와 기준값은 전부 초깃값입니다.</p>
       </footer>
     </main>
   );

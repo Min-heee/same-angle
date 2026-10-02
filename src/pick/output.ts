@@ -18,13 +18,19 @@ import { applySimilarity, compose, invert, scaleOf, uniformScale, type Point, ty
 const longSide = (s: FrameSize) => Math.max(s.width, s.height);
 
 /**
- * 출력 크기: 기준 사진과 같은 화면비, 긴 변은 기준 사진의 긴 변과 1920px 가운데 작은 쪽.
+ * 출력 크기: 기준 사진과 같은 화면비, 긴 변은 기준 사진의 긴 변과 상한(동영상 1920px, 사진 여러 장
+ * 4096px) 가운데 작은 쪽.
  * 크기가 유한한 양수가 아니면 null.
  */
-export function outputSize(referenceOriginal: FrameSize, rules: Rules = RULES): FrameSize | null {
+export function outputSize(
+  referenceOriginal: FrameSize,
+  rules: Rules = RULES,
+  /** 긴 변 상한(px). 사진 여러 장에서 고를 때는 `rules.photos.outputMaxLongSidePx` 를 넘긴다. */
+  maxLongSidePx: number = rules.output.maxLongSidePx,
+): FrameSize | null {
   const { width, height } = referenceOriginal;
   if (!(width > 0) || !(height > 0) || !Number.isFinite(width) || !Number.isFinite(height)) return null;
-  const k = Math.min(1, rules.output.maxLongSidePx / Math.max(width, height));
+  const k = Math.min(1, maxLongSidePx / Math.max(width, height));
   return { width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)) };
 }
 
@@ -35,7 +41,7 @@ export interface OutputGeometryInput {
   referenceMeasured: FrameSize;
   /** 장면을 잰 캔버스의 크기. */
   frameMeasured: FrameSize;
-  /** 장면의 원본 크기(동영상 해상도). 출력은 이 크기로 한 번 더 그린 장면에서 만든다. */
+  /** 장면의 원본 크기(동영상 해상도, 또는 고른 사진의 크기). 출력은 이 크기로 한 번 더 그린 장면에서 만든다. */
   frameNative: FrameSize;
   /** 출력 크기(`outputSize`). */
   output: FrameSize;
@@ -152,8 +158,9 @@ export interface OutputGeometry {
 export function outputGeometry(
   input: Omit<OutputGeometryInput, "output"> & { referenceOriginal: FrameSize; referenceBox: Rect },
   rules: Rules = RULES,
+  maxLongSidePx: number = rules.output.maxLongSidePx,
 ): OutputGeometry | null {
-  const size = outputSize(input.referenceOriginal, rules);
+  const size = outputSize(input.referenceOriginal, rules, maxLongSidePx);
   if (size === null) return null;
   if (!(longSide(input.frameNative) > 0) || !(longSide(input.frameMeasured) > 0)) return null;
   if (!(longSide(input.referenceMeasured) > 0)) return null;

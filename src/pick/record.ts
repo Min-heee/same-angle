@@ -13,6 +13,10 @@
  *     경고를 다시 낸다. 되살릴 수 있는 것은 **판정과 경고**이고 고르기 자체는 아니다(모든 장면의
  *     표는 넣지 않는다).
  *
+ * **사진 여러 장에서 고른 기록(PRD v0.3.1)** 은 종류 이름이 다른 별도 형식(`PhotoPickRecord`)이다.
+ * 동영상 기록의 형식은 그대로 둔다. 사진 기록에는 입력 종류·장수·고른 순번이 들어가고, 시각·길이
+ * 칸이 없다. **파일 이름은 넣지 않는다** — 빌더가 파일 이름을 받지도 않는다.
+ *
  * 환자를 가리키는 값은 넣지 않는다. 자유 메모는 사용자가 쓴 그대로 들어가므로, 이름 대신 병원이
  * 쓰는 번호를 권한다(화면 안내).
  *
@@ -29,6 +33,7 @@ import {
   newBudget,
   type Errors,
 } from "@/core/report";
+import { photoNumberOf } from "./burst";
 import { anchorQuality } from "./compare";
 import { viewToTrace } from "./direction";
 import type { ExclusionCounts } from "./exclude";
@@ -37,6 +42,7 @@ import {
   judge,
   judgeCandidate,
   orientationOf,
+  photoJudgeContext,
   type JudgeContext,
   type JudgeNumbers,
   type Judgement,
@@ -168,7 +174,13 @@ export function rulesSnapshot(rules: Rules = RULES): Rules {
   return JSON.parse(JSON.stringify(rules)) as Rules;
 }
 
-function candidateRecord(c: Candidate, ctx: JudgeContext, rules: Rules): RecordCandidate {
+/** 동영상 기록과 사진 기록의 후보가 함께 갖는 칸(판정에 쓴 숫자·판정·경고·방향·보정량). */
+type CandidateCore = Pick<
+  RecordCandidate,
+  "rank" | "analysisRank" | "numbers" | "verdict" | "warnings" | "score" | "direction" | "axes" | "correction"
+>;
+
+function candidateCore(c: Candidate, ctx: JudgeContext, rules: Rules): CandidateCore {
   const j = judgeCandidate(
     {
       face: c.measurement.face,
@@ -184,15 +196,6 @@ function candidateRecord(c: Candidate, ctx: JudgeContext, rules: Rules): RecordC
   return {
     rank: c.rank,
     analysisRank: c.analysisRank,
-    timeSec: c.measurement.timeSec,
-    requestedTimeSec: c.measurement.requestedTimeSec,
-    timeIsReported: c.measurement.timeIsReported,
-    analysis: {
-      timeSec: c.analysis.timeSec,
-      angleDeg: c.analysis.angleDeg,
-      score: c.analysis.score,
-      phase: c.analysis.phase,
-    },
     numbers: j.numbers,
     verdict: j.verdict,
     warnings: j.warnings,
@@ -210,6 +213,31 @@ function candidateRecord(c: Candidate, ctx: JudgeContext, rules: Rules): RecordC
           totalEmptyFraction: out.totalEmptyFraction,
         }
       : null,
+  };
+}
+
+function candidateRecord(c: Candidate, ctx: JudgeContext, rules: Rules): RecordCandidate {
+  const core = candidateCore(c, ctx, rules);
+  // 칸의 순서는 예전 그대로 둔다(내보낸 JSON 의 모양이 바뀌지 않게).
+  return {
+    rank: core.rank,
+    analysisRank: core.analysisRank,
+    timeSec: c.measurement.timeSec,
+    requestedTimeSec: c.measurement.requestedTimeSec,
+    timeIsReported: c.measurement.timeIsReported,
+    analysis: {
+      timeSec: c.analysis.timeSec,
+      angleDeg: c.analysis.angleDeg,
+      score: c.analysis.score,
+      phase: c.analysis.phase,
+    },
+    numbers: core.numbers,
+    verdict: core.verdict,
+    warnings: core.warnings,
+    score: core.score,
+    direction: core.direction,
+    axes: core.axes,
+    correction: core.correction,
   };
 }
 
@@ -302,6 +330,163 @@ export function buildPickRecord(input: PickRecordInput): PickRecord {
 }
 
 // ---------------------------------------------------------------------------
+// 사진 여러 장에서 고른 기록(PRD v0.3.1)
+
+export const PHOTO_PICK_RECORD_KIND = "same-angle-photo-pick-record";
+/** 형식을 바꾸면 올린다. 다른 버전은 읽지 않는다. */
+export const PHOTO_PICK_RECORD_VERSION = 1;
+
+export interface PhotoRecordCandidate extends CandidateCore {
+  /** 순번(1부터): 고른 파일을 파일 이름 순으로 세운 차례. **파일 이름은 기록하지 않는다.** */
+  photoNumber: number;
+  /** 그 사진의 원본 크기(회전 정보를 반영한 뒤). */
+  width: number;
+  height: number;
+  /** 다시 재기 전의 값. */
+  analysis: { angleDeg: number; score: number };
+}
+
+export interface PhotoPickRecord {
+  kind: typeof PHOTO_PICK_RECORD_KIND;
+  version: typeof PHOTO_PICK_RECORD_VERSION;
+  /** 입력 종류. */
+  source: "photos";
+  createdAt: string;
+  rulesVersion: string;
+  rules: Rules;
+  shotKind: ShotKind;
+  reference: PickRecord["reference"];
+  photos: {
+    /** 고른 파일 수. */
+    selected: number;
+    /** 실제로 본 수(상한을 적용한 뒤). */
+    used: number;
+    /** 읽지 못해 뺀 수. */
+    unreadable: number;
+    /** 가장 많은 크기와 가로·세로가 다른 사진 수. */
+    sizeMismatch: number;
+    /** 읽은 사진 가운데 가장 많은 크기. 한 장도 읽지 못했으면 null. */
+    commonWidth: number | null;
+    commonHeight: number | null;
+    /** 저장한 사진의 순번. 멈췄으면 null. */
+    chosenNumber: number | null;
+    /** 저장한 사진 원본 파일의 SHA-256. 어느 파일인지는 이름이 아니라 이 값으로 잇는다. */
+    chosenFileSha256: string | null;
+  };
+  stop: StopCode | null;
+  chosenRank: number | null;
+  candidates: PhotoRecordCandidate[];
+  excluded: ExclusionCounts;
+  remeasureDropped: number;
+  /** 잰 사진 수(읽을 수 있었던 것)와 다시 잰 수. */
+  measured: { photos: number; remeasure: number };
+  /** 자취: 얼굴을 읽은 사진의 순번과 보는 방향 2값. 세 배열의 길이가 같다. */
+  trace: { photoNumber: number[]; h: number[]; v: number[] };
+  retakeCount: number;
+  retakeReason: string | null;
+  memo: string | null;
+  files: { originalPngSha256: string | null; correctedPngSha256: string | null };
+}
+
+export interface PhotoPickRecordInput {
+  createdAt: string;
+  shotKind: ShotKind;
+  reference: PickRecordInput["reference"];
+  /** 고른 파일 수와, 저장한 사진 원본 파일의 해시. **파일 이름을 받는 칸은 없다.** */
+  photos: { selected: number; chosenFileSha256: string | null };
+  /** `analyzePhotos` 의 결과(고름 또는 멈춤). `photos` 묶음 정보가 붙어 있어야 한다. */
+  analysis: Exclude<AnalysisResult, { kind: "cancelled" }>;
+  chosenRank: number | null;
+  retakeCount: number;
+  retakeReason: string | null;
+  memo: string | null;
+  files: { originalPngSha256: string | null; correctedPngSha256: string | null };
+  rules?: Rules;
+}
+
+/**
+ * 사진 여러 장에서 고른 기록을 만들고 검사한다. 검사에 걸리면 PickRecordError.
+ * 후보의 숫자·판정·경고는 화면이 쓰는 것과 같은 함수로 여기서 다시 계산한다(후보마다 그 사진의
+ * 원본 크기로).
+ */
+export function buildPhotoPickRecord(input: PhotoPickRecordInput): PhotoPickRecord {
+  const rules = input.rules ?? RULES;
+  const a = input.analysis;
+  const set = a.photos;
+  if (!set) throw new PickRecordError(["analysis.photos: 사진 묶음 정보가 없음(동영상 분석은 buildPickRecord 로)"]);
+  const ref = input.reference.measured;
+  const base = { reference: ref, referenceOriginal: input.reference.original };
+
+  const list = a.kind === "picked" ? [a.winner, ...a.runnerUps] : [];
+  const candidates = list.map((c): PhotoRecordCandidate => {
+    const photoNumber = photoNumberOf(c.measurement.timeSec);
+    const size = set.sizes[photoNumber - 1] ?? null;
+    if (size === null) throw new PickRecordError([`candidates(rank ${c.rank}): ${photoNumber}번째 사진의 크기를 모름`]);
+    return {
+      ...candidateCore(c, photoJudgeContext(base, size, rules), rules),
+      photoNumber,
+      width: size.width,
+      height: size.height,
+      analysis: { angleDeg: c.analysis.angleDeg, score: c.analysis.score },
+    };
+  });
+  const chosen = candidates.find((c) => c.rank === input.chosenRank) ?? null;
+
+  const record: PhotoPickRecord = {
+    kind: PHOTO_PICK_RECORD_KIND,
+    version: PHOTO_PICK_RECORD_VERSION,
+    source: "photos",
+    createdAt: input.createdAt,
+    rulesVersion: RULES_VERSION,
+    rules: rulesSnapshot(rules),
+    shotKind: input.shotKind,
+    reference: {
+      width: input.reference.original.width,
+      height: input.reference.original.height,
+      measuredWidth: ref.face.frame.width,
+      measuredHeight: ref.face.frame.height,
+      fileSha256: input.reference.fileSha256,
+      sharpness: ref.sharpness,
+      meanLuma: ref.skin?.meanLuma ?? null,
+      clipRatio: ref.skin?.clipRatio ?? null,
+      direction: viewToTrace(ref.face.view),
+      axes: { ...ref.face.axes },
+      faceShortRatio: ref.face.faceShortRatio,
+      anchors: anchorQuality(ref.face, rules),
+    },
+    photos: {
+      selected: input.photos.selected,
+      used: set.count,
+      unreadable: set.unreadable,
+      sizeMismatch: set.sizeMismatch,
+      commonWidth: set.commonSize?.width ?? null,
+      commonHeight: set.commonSize?.height ?? null,
+      chosenNumber: chosen?.photoNumber ?? null,
+      chosenFileSha256: chosen ? input.photos.chosenFileSha256 : null,
+    },
+    stop: a.kind === "stopped" ? a.stop : null,
+    chosenRank: input.chosenRank,
+    candidates,
+    excluded: { ...a.excluded },
+    remeasureDropped: a.remeasureDropped,
+    measured: { photos: a.measured.coarse, remeasure: a.measured.remeasure },
+    trace: {
+      photoNumber: a.trace.map((t) => photoNumberOf(t.timeSec)),
+      h: a.trace.map((t) => t.h),
+      v: a.trace.map((t) => t.v),
+    },
+    retakeCount: input.retakeCount,
+    retakeReason: input.retakeReason,
+    memo: input.memo,
+    files: { ...input.files },
+  };
+
+  const result = validatePhotoPickRecord(record);
+  if (!result.ok) throw new PickRecordError(result.errors);
+  return result.record;
+}
+
+// ---------------------------------------------------------------------------
 // 검사
 
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
@@ -309,6 +494,11 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 const ORIENTATIONS: readonly string[] = ["portrait", "landscape", "square"];
 const PHASES: readonly string[] = ["coarse", "fine", "remeasure"];
 const STOPS: readonly string[] = ["S1", "S2", "S3", "S4", "S5"];
+/** 사진 기록의 멈춤: 쓸 수 있는 사진 없음(S4), 한 장도 읽지 못함(S6). */
+const PHOTO_STOPS: readonly string[] = ["S4", "S6"];
+
+/** 기록의 모양: 동영상에서 고른 기록 또는 사진 여러 장에서 고른 기록. */
+type Shape = "video" | "photos";
 
 type Obj = Record<string, unknown>;
 
@@ -407,47 +597,55 @@ function checkAxes(v: unknown, path: string, errors: Errors): void {
   if (d) for (const k of ["yaw", "pitch", "roll"]) num(d, k, path, errors);
 }
 
-function checkCandidate(v: unknown, path: string, errors: Errors): void {
-  const c = obj(
-    v,
-    path,
-    [
-      "rank",
-      "analysisRank",
-      "timeSec",
-      "requestedTimeSec",
-      "timeIsReported",
-      "analysis",
-      "numbers",
-      "verdict",
-      "warnings",
-      "score",
-      "direction",
-      "axes",
-      "correction",
-    ],
-    errors,
-  );
+const CANDIDATE_CORE_KEYS = ["rank", "analysisRank", "numbers", "verdict", "warnings", "score", "direction", "axes", "correction"];
+const VIDEO_CANDIDATE_KEYS = [...CANDIDATE_CORE_KEYS, "timeSec", "requestedTimeSec", "timeIsReported", "analysis"];
+const PHOTO_CANDIDATE_KEYS = [...CANDIDATE_CORE_KEYS, "photoNumber", "width", "height", "analysis"];
+
+function checkCandidate(v: unknown, path: string, errors: Errors, shape: Shape = "video"): void {
+  const c = obj(v, path, shape === "photos" ? PHOTO_CANDIDATE_KEYS : VIDEO_CANDIDATE_KEYS, errors);
   if (!c) return;
   for (const k of ["rank", "analysisRank"]) {
     count(c, k, path, errors);
     if (c[k] === 0) errors.push(`${path}.${k}: 1 이상이어야 함`);
   }
-  for (const k of ["timeSec", "requestedTimeSec", "score"]) num(c, k, path, errors);
-  bool(c, "timeIsReported", path, errors);
+  num(c, "score", path, errors);
   oneOf(c, "verdict", ["close", "notClose"], path, errors);
 
-  if ("analysis" in c) {
-    const a = obj(c.analysis, `${path}.analysis`, ["timeSec", "angleDeg", "score", "phase"], errors);
-    if (a) {
-      for (const k of ["timeSec", "angleDeg", "score"]) num(a, k, `${path}.analysis`, errors);
-      oneOf(a, "phase", PHASES, `${path}.analysis`, errors);
+  if (shape === "photos") {
+    count(c, "photoNumber", path, errors);
+    if (c.photoNumber === 0) errors.push(`${path}.photoNumber: 1 이상이어야 함`);
+    for (const k of ["width", "height"]) {
+      num(c, k, path, errors);
+      if (typeof c[k] === "number" && !((c[k] as number) > 0)) errors.push(`${path}.${k}: 0 보다 커야 함`);
+    }
+    if ("analysis" in c) {
+      const a = obj(c.analysis, `${path}.analysis`, ["angleDeg", "score"], errors);
+      if (a) for (const k of ["angleDeg", "score"]) num(a, k, `${path}.analysis`, errors);
+    }
+  } else {
+    for (const k of ["timeSec", "requestedTimeSec"]) num(c, k, path, errors);
+    bool(c, "timeIsReported", path, errors);
+    if ("analysis" in c) {
+      const a = obj(c.analysis, `${path}.analysis`, ["timeSec", "angleDeg", "score", "phase"], errors);
+      if (a) {
+        for (const k of ["timeSec", "angleDeg", "score"]) num(a, k, `${path}.analysis`, errors);
+        oneOf(a, "phase", PHASES, `${path}.analysis`, errors);
+      }
     }
   }
   if ("numbers" in c) {
     const n = obj(c.numbers, `${path}.numbers`, JUDGE_KEYS, errors);
     if (n) {
-      for (const k of NUMBER_KEYS_REQUIRED) num(n, k, `${path}.numbers`, errors);
+      for (const k of NUMBER_KEYS_REQUIRED) {
+        // 사진 여러 장에는 길이가 없다. 그 칸은 null 이어야 한다(0 으로 채우지 않는다).
+        if (k === "videoDurationSec" && shape === "photos") {
+          if ("videoDurationSec" in n && n.videoDurationSec !== null) {
+            errors.push(`${path}.numbers.videoDurationSec: 사진 기록에서는 null 이어야 함`);
+          }
+          continue;
+        }
+        num(n, k, `${path}.numbers`, errors);
+      }
       for (const k of NUMBER_KEYS_NULLABLE) numOrNull(n, k, `${path}.numbers`, errors);
       oneOf(n, "referenceOrientation", ORIENTATIONS, `${path}.numbers`, errors);
       oneOf(n, "videoOrientation", ORIENTATIONS, `${path}.numbers`, errors);
@@ -474,46 +672,46 @@ function checkCandidate(v: unknown, path: string, errors: Errors): void {
   }
 }
 
-function collectErrors(x: unknown): Errors {
+const COMMON_TOP_KEYS = [
+  "kind",
+  "version",
+  "createdAt",
+  "rulesVersion",
+  "rules",
+  "shotKind",
+  "reference",
+  "stop",
+  "chosenRank",
+  "candidates",
+  "excluded",
+  "remeasureDropped",
+  "measured",
+  "trace",
+  "retakeCount",
+  "retakeReason",
+  "memo",
+  "files",
+];
+const VIDEO_TOP_KEYS = [...COMMON_TOP_KEYS, "video", "quickAnswer"];
+const PHOTO_TOP_KEYS = [...COMMON_TOP_KEYS, "source", "photos"];
+
+function collectErrors(x: unknown, shape: Shape = "video"): Errors {
   const errors: Errors = [];
   if (!isPlainObject(x)) return ["기록이 객체가 아님"];
+  const photos = shape === "photos";
+  const kind = photos ? PHOTO_PICK_RECORD_KIND : PICK_RECORD_KIND;
+  const version = photos ? PHOTO_PICK_RECORD_VERSION : PICK_RECORD_VERSION;
 
-  checkKeys(
-    x,
-    [
-      "kind",
-      "version",
-      "createdAt",
-      "rulesVersion",
-      "rules",
-      "shotKind",
-      "reference",
-      "video",
-      "stop",
-      "chosenRank",
-      "candidates",
-      "excluded",
-      "remeasureDropped",
-      "measured",
-      "quickAnswer",
-      "trace",
-      "retakeCount",
-      "retakeReason",
-      "memo",
-      "files",
-    ],
-    "record",
-    errors,
-  );
+  checkKeys(x, photos ? PHOTO_TOP_KEYS : VIDEO_TOP_KEYS, "record", errors);
 
   // 자유 형식 검사(유한 수·금지 키·data URL·base64 연속·길이·깊이)와 총량을 기록 전체에 건다.
   const budget = newBudget();
   checkJson(x, "record", 0, errors, budget);
   checkBudget(budget, "record", errors);
 
-  if (x.kind !== PICK_RECORD_KIND) errors.push(`record.kind: "${PICK_RECORD_KIND}" 가 아님`);
-  if (x.version !== PICK_RECORD_VERSION) {
-    errors.push(`record.version: ${PICK_RECORD_VERSION} 이 아님(받은 값 ${String(x.version)})`);
+  if (x.kind !== kind) errors.push(`record.kind: "${kind}" 가 아님`);
+  if (x.version !== version) {
+    errors.push(`record.version: ${version} 이 아님(받은 값 ${String(x.version)})`);
   }
   if ("createdAt" in x) isoOrNull(x.createdAt, "record.createdAt", false, errors);
   if ("rulesVersion" in x && typeof x.rulesVersion !== "string") errors.push("record.rulesVersion: 문자열이 아님");
@@ -558,7 +756,12 @@ function collectErrors(x: unknown): Errors {
     }
   }
 
-  if ("video" in x) {
+  if (photos) {
+    if ("source" in x && x.source !== "photos") errors.push('record.source: "photos" 가 아님');
+    if ("photos" in x) checkPhotoSet(x.photos, errors);
+  }
+
+  if (!photos && "video" in x) {
     const p = "record.video";
     const v = obj(
       x.video,
@@ -573,7 +776,7 @@ function collectErrors(x: unknown): Errors {
     }
   }
 
-  if ("stop" in x && x.stop !== null) oneOf(x, "stop", STOPS, "record", errors);
+  if ("stop" in x && x.stop !== null) oneOf(x, "stop", photos ? PHOTO_STOPS : STOPS, "record", errors);
 
   let ranks: number[] = [];
   if ("candidates" in x) {
@@ -582,7 +785,7 @@ function collectErrors(x: unknown): Errors {
       if (x.candidates.length > MAX_RECORD_CANDIDATES) {
         errors.push(`record.candidates: 너무 많음(${x.candidates.length} > ${MAX_RECORD_CANDIDATES})`);
       }
-      x.candidates.forEach((c, i) => checkCandidate(c, `record.candidates[${i}]`, errors));
+      x.candidates.forEach((c, i) => checkCandidate(c, `record.candidates[${i}]`, errors, shape));
       ranks = x.candidates.map((c) => (isPlainObject(c) && typeof c.rank === "number" ? c.rank : Number.NaN));
       if (new Set(ranks).size !== ranks.length) errors.push("record.candidates: 순위가 겹침");
     }
@@ -601,6 +804,13 @@ function collectErrors(x: unknown): Errors {
     }
   }
 
+  // 사진 기록: 고른 순번은 저장한 후보의 순번과 같아야 하고, 멈춘 기록에는 없어야 한다.
+  if (photos && isPlainObject(x.photos) && Array.isArray(x.candidates) && "chosenRank" in x) {
+    const chosen = x.candidates.find((c) => isPlainObject(c) && c.rank === x.chosenRank);
+    const expected = isPlainObject(chosen) ? chosen.photoNumber : null;
+    if (x.photos.chosenNumber !== expected) errors.push("record.photos.chosenNumber: 저장한 후보의 순번과 다름");
+  }
+
   if ("excluded" in x) {
     const e = obj(x.excluded, "record.excluded", ["X1", "X2", "X3", "X4", "total"], errors);
     if (e) {
@@ -613,11 +823,12 @@ function collectErrors(x: unknown): Errors {
   count(x, "retakeCount", "record", errors);
 
   if ("measured" in x) {
-    const m = obj(x.measured, "record.measured", ["coarse", "fine", "remeasure"], errors);
-    if (m) for (const k of ["coarse", "fine", "remeasure"]) count(m, k, "record.measured", errors);
+    const keys = photos ? ["photos", "remeasure"] : ["coarse", "fine", "remeasure"];
+    const m = obj(x.measured, "record.measured", keys, errors);
+    if (m) for (const k of keys) count(m, k, "record.measured", errors);
   }
 
-  if ("quickAnswer" in x && x.quickAnswer !== null) {
+  if (!photos && "quickAnswer" in x && x.quickAnswer !== null) {
     const q = obj(x.quickAnswer, "record.quickAnswer", ["answer", "minAngleDeg"], errors);
     if (q) {
       oneOf(q, "answer", ["passedNear", "notNear"], "record.quickAnswer", errors);
@@ -626,10 +837,11 @@ function collectErrors(x: unknown): Errors {
   }
 
   if ("trace" in x) {
-    const t = obj(x.trace, "record.trace", ["timeSec", "h", "v"], errors);
+    const keys = [photos ? "photoNumber" : "timeSec", "h", "v"];
+    const t = obj(x.trace, "record.trace", keys, errors);
     if (t) {
       const lens: number[] = [];
-      for (const k of ["timeSec", "h", "v"]) {
+      for (const k of keys) {
         const arr = t[k];
         if (!Array.isArray(arr)) {
           if (k in t) errors.push(`record.trace.${k}: 배열이 아님`);
@@ -656,12 +868,49 @@ function collectErrors(x: unknown): Errors {
   return errors;
 }
 
+const PHOTO_SET_KEYS = [
+  "selected",
+  "used",
+  "unreadable",
+  "sizeMismatch",
+  "commonWidth",
+  "commonHeight",
+  "chosenNumber",
+  "chosenFileSha256",
+];
+
+function checkPhotoSet(v: unknown, errors: Errors): void {
+  const p = "record.photos";
+  const o = obj(v, p, PHOTO_SET_KEYS, errors);
+  if (!o) return;
+  for (const k of ["selected", "used", "unreadable", "sizeMismatch"]) count(o, k, p, errors);
+  for (const k of ["commonWidth", "commonHeight"]) numOrNull(o, k, p, errors);
+  if ("chosenNumber" in o && o.chosenNumber !== null) {
+    count(o, "chosenNumber", p, errors);
+    if (o.chosenNumber === 0) errors.push(`${p}.chosenNumber: 1 이상이어야 함`);
+  }
+  shaOrNull(o, "chosenFileSha256", p, errors);
+  const n = (k: string) => (typeof o[k] === "number" ? (o[k] as number) : Number.NaN);
+  if (n("used") > n("selected")) errors.push(`${p}.used: 고른 수보다 많음`);
+  if (n("unreadable") > n("used")) errors.push(`${p}.unreadable: 본 수보다 많음`);
+  if (n("sizeMismatch") > n("used") - n("unreadable")) errors.push(`${p}.sizeMismatch: 읽은 수보다 많음`);
+  if (typeof o.chosenNumber === "number" && o.chosenNumber > n("used")) errors.push(`${p}.chosenNumber: 본 수보다 큼`);
+}
+
 export type PickRecordValidation = { ok: true; record: PickRecord } | { ok: false; errors: string[] };
 
 /** 파싱한 JSON(또는 무엇이든)을 검사한다. 고치거나 채우지 않고, 틀린 곳을 전부 모아 돌려준다. */
 export function validatePickRecord(x: unknown): PickRecordValidation {
   const errors = collectErrors(x);
   return errors.length === 0 ? { ok: true, record: x as PickRecord } : { ok: false, errors };
+}
+
+export type PhotoPickRecordValidation = { ok: true; record: PhotoPickRecord } | { ok: false; errors: string[] };
+
+/** 사진 여러 장에서 고른 기록을 검사한다. 동영상 기록을 넣으면 종류가 달라 거부한다(그 반대도 같다). */
+export function validatePhotoPickRecord(x: unknown): PhotoPickRecordValidation {
+  const errors = collectErrors(x, "photos");
+  return errors.length === 0 ? { ok: true, record: x as PhotoPickRecord } : { ok: false, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -679,7 +928,11 @@ export interface Rejudged {
  * 기록을 다시 판정한다. 살아 있는 결과가 쓰는 `judge` 를 **기록에 적힌 규칙 값**으로 부른다 —
  * 지금 코드의 경계값이 바뀌었어도 그때의 판정이 그대로 나온다.
  */
-export function rejudge(record: PickRecord): Rejudged[] {
+export function rejudge(
+  record: Pick<PickRecord, "rules"> & {
+    candidates: readonly Pick<RecordCandidate, "rank" | "numbers" | "verdict" | "warnings">[];
+  },
+): Rejudged[] {
   return record.candidates.map((c) => {
     const judgement = judge(c.numbers, record.rules);
     const matchesRecord =

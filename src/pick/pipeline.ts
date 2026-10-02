@@ -23,12 +23,32 @@ import {
   type Exclusion,
   type ExclusionCounts,
 } from "./exclude";
-import type { FaceReading, FrameMeasurement } from "./measure";
+import type { FaceReading, FrameMeasurement, FrameSize } from "./measure";
 import { coarsePlan, fineCenters, finePlan, quickAnswerOf, type QuickAnswer } from "./plan";
 import { RULES, type Rules } from "./rules";
 import { rerank, select, verdictOf, type Rankable, type Verdict } from "./select";
 
 export type ScanPhase = "coarse" | "fine" | "remeasure";
+
+/** 입력의 종류: 동영상 1개 또는 사진 여러 장(연사, PRD v0.3.1). */
+export type SourceKind = "video" | "photos";
+
+/**
+ * 사진 여러 장에서 고른 분석에만 붙는 묶음 정보(`burst.ts` 의 `analyzePhotos` 가 채운다).
+ * 파일 이름은 여기에 없다 — 순번으로만 가리킨다.
+ */
+export interface PhotoSetSummary {
+  /** 본 사진 수(상한을 적용한 뒤). 순번은 1 부터 이 수까지다. */
+  count: number;
+  /** 읽지 못해 뺀 사진 수. */
+  unreadable: number;
+  /** 사진마다의 원본 크기(회전 정보를 반영한 뒤). `sizes[순번 − 1]`. 읽지 못했으면 null. */
+  sizes: (FrameSize | null)[];
+  /** 읽은 사진 가운데 가장 많은 크기. 한 장도 읽지 못했으면 null. */
+  commonSize: FrameSize | null;
+  /** 가장 많은 크기와 가로·세로가 다른 사진 수. */
+  sizeMismatch: number;
+}
 
 export interface Progress {
   phase: ScanPhase;
@@ -115,11 +135,13 @@ interface Common {
   /** 60초를 넘어 앞부분만 봤는가. */
   truncated: boolean;
   effectiveDurationSec: number;
+  /** 사진 여러 장에서 고른 분석이면 그 묶음의 정보. 동영상이면 없다. */
+  photos?: PhotoSetSummary;
 }
 
 export type AnalysisResult =
   | { kind: "cancelled" }
-  | ({ kind: "stopped"; stop: "S3" | "S4" } & Common)
+  | ({ kind: "stopped"; stop: "S3" | "S4" | "S6" } & Common)
   | ({
       kind: "picked";
       /** 1등. `verdict` 가 "notClose" 면 "가까운 장면 없음"이다. */
@@ -130,20 +152,21 @@ export type AnalysisResult =
       sharpnessBaseline: number | null;
     } & Common);
 
-interface Evaluated {
+export interface Evaluated {
   measurement: FrameMeasurement;
   phase: ScanPhase;
   exclusion: Exclusion | null;
   comparison: Comparison | null;
 }
 
-interface Ranked extends Rankable {
+export interface Ranked extends Rankable {
   measurement: MeasuredFace;
   comparison: Comparison;
   phase: ScanPhase;
 }
 
-function evaluate(
+/** 장면 하나의 제외 판정과 기준 사진과의 견줌. 동영상과 사진 묶음이 함께 쓴다. */
+export function evaluate(
   reference: FaceReading,
   measurement: FrameMeasurement,
   phase: ScanPhase,
@@ -159,7 +182,8 @@ function evaluate(
   return { measurement, phase, exclusion: null, comparison };
 }
 
-function toRanked(e: Evaluated): Ranked | null {
+/** 고르기에 넣을 수 있는 장면이면 그 값을, 아니면 null. */
+export function toRanked(e: Evaluated): Ranked | null {
   if (e.exclusion !== null || e.comparison === null || e.measurement.face === null) return null;
   if (e.measurement.sharpness === null) return null;
   return {
@@ -174,6 +198,61 @@ function toRanked(e: Evaluated): Ranked | null {
 }
 
 const notNull = <T>(v: T | null): v is T => v !== null;
+
+export type FinalSelection =
+  | { winner: Candidate; runnerUps: Candidate[]; remeasureDropped: number }
+  | { winner: null; runnerUps: []; remeasureDropped: number };
+
+/**
+ * 다시 잰 값으로 순위와 판정을 매긴다(6단계). 동영상과 사진 묶음이 함께 쓴다.
+ *
+ * `again[i]` 는 `shortlist[i]` 를 다시 잰 값이다. 다시 재지 못했거나(null — 사진 파일을 다시 풀지
+ * 못한 경우) 다시 쟀더니 제외 조건에 걸린 장면은 버린다. 모두 버려지면 그다음 순위를 찾아 내려가지
+ * 않는다(`winner` 가 null).
+ */
+export function finalizeShortlist(
+  reference: FaceReading,
+  shortlist: readonly Ranked[],
+  again: readonly (FrameMeasurement | null)[],
+  baseline: number | null,
+  rules: Rules,
+): FinalSelection {
+  let remeasureDropped = 0;
+  const survivors: (Ranked & { analysisRank: number; before: Ranked })[] = [];
+  again.forEach((m, i) => {
+    const r = m === null ? null : toRanked(evaluate(reference, m, "remeasure", baseline, rules));
+    if (r === null) {
+      remeasureDropped++;
+      return;
+    }
+    survivors.push({ ...r, analysisRank: i + 1, before: shortlist[i] });
+  });
+
+  const final = rerank(survivors, rules);
+  if (final === null) return { winner: null, runnerUps: [], remeasureDropped };
+
+  const toCandidate = (s: (typeof survivors)[number], rank: number): Candidate => ({
+    rank,
+    analysisRank: s.analysisRank,
+    measurement: s.measurement,
+    comparison: s.comparison,
+    verdict: verdictOf(s.comparison.angleDeg, rules),
+    analysis: {
+      timeSec: s.before.timeSec,
+      requestedTimeSec: s.before.measurement.requestedTimeSec,
+      angleDeg: s.before.angleDeg,
+      score: s.before.score,
+      phase: s.before.phase,
+    },
+    remeasureShiftDeg: angleBetweenDeg(s.before.measurement.face.view, s.measurement.face.view),
+  });
+
+  return {
+    winner: toCandidate(final.winner, 1),
+    runnerUps: final.runnerUps.map((s, i) => toCandidate(s, i + 2)),
+    remeasureDropped,
+  };
+}
 
 /** 동영상 하나를 분석한다. */
 export async function analyze(opts: AnalyzeOptions): Promise<AnalysisResult> {
@@ -265,47 +344,20 @@ export async function analyze(opts: AnalyzeOptions): Promise<AnalysisResult> {
   );
   if (again === null) return { kind: "cancelled" };
 
-  let remeasureDropped = 0;
-  const survivors: (Ranked & { analysisRank: number; before: Ranked })[] = [];
-  again.forEach((m, i) => {
-    const r = toRanked(evaluate(opts.reference, m, "remeasure", baseline, rules));
-    if (r === null) {
-      remeasureDropped++;
-      return;
-    }
-    survivors.push({ ...r, analysisRank: i + 1, before: shortlist[i] });
-  });
-
-  // 6. 다시 잰 값으로 순위와 판정
-  const final = rerank(survivors, rules);
-  if (final === null) {
+  const final = finalizeShortlist(opts.reference, shortlist, again, baseline, rules);
+  if (final.winner === null) {
     return {
       kind: "stopped",
       stop: "S4",
-      ...common({ excluded, multipleFaces, remeasureDropped, quickAnswer, trace }),
+      ...common({ excluded, multipleFaces, remeasureDropped: final.remeasureDropped, quickAnswer, trace }),
     };
   }
-  const toCandidate = (s: (typeof survivors)[number], rank: number): Candidate => ({
-    rank,
-    analysisRank: s.analysisRank,
-    measurement: s.measurement,
-    comparison: s.comparison,
-    verdict: verdictOf(s.comparison.angleDeg, rules),
-    analysis: {
-      timeSec: s.before.timeSec,
-      requestedTimeSec: s.before.measurement.requestedTimeSec,
-      angleDeg: s.before.angleDeg,
-      score: s.before.score,
-      phase: s.before.phase,
-    },
-    remeasureShiftDeg: angleBetweenDeg(s.before.measurement.face.view, s.measurement.face.view),
-  });
 
   return {
     kind: "picked",
-    winner: toCandidate(final.winner, 1),
-    runnerUps: final.runnerUps.map((s, i) => toCandidate(s, i + 2)),
+    winner: final.winner,
+    runnerUps: final.runnerUps,
     sharpnessBaseline: baseline,
-    ...common({ excluded, multipleFaces, remeasureDropped, quickAnswer, trace }),
+    ...common({ excluded, multipleFaces, remeasureDropped: final.remeasureDropped, quickAnswer, trace }),
   };
 }

@@ -9,6 +9,8 @@
  * `<a download href=blob:>` 로 한다. 밖으로 나가는 요청은 얼굴 모델을 받는 것 하나뿐이고(엔진의
  * `loadPickLandmarker` → `spike/engine.ts`, fetch 가드를 먼저 깐다) 이 화면이 새로 더한 것은 없다.
  *
+ * 사진 여러 장(연사)도 같은 길이다: 한 장씩 `createImageBitmap` 으로 풀어 재고 바로 놓는다.
+ *
  * 메모리: 원본 크기 캔버스는 지금 보는 후보 한 장만 들고 있는다. 화면에 보이는 그림은 JPEG 로
  * 줄여 blob 주소로 넘긴다(캔버스를 화면에 여러 장 붙여 두지 않는다).
  */
@@ -16,6 +18,7 @@
 import type { FaceLandmarker } from "@mediapipe/tasks-vision";
 import { analyzeVideo, measureReference } from "../glue/analyze";
 import { loadPickLandmarker } from "../glue/landmarker";
+import { analyzePhotoSet, openPhoto, openPhotoSet, type OpenedPhotoSet } from "../glue/photos";
 import { openReference, type OpenedReference } from "../glue/reference";
 import { renderCorrected } from "../glue/render";
 import { openVideo, seekTo, type OpenedVideo } from "../glue/video";
@@ -109,37 +112,30 @@ async function pngWithBand(image: HTMLCanvasElement, lines: readonly string[]): 
   }
 }
 
-async function renderCandidateOf(
-  video: OpenedVideo,
-  requestedTimeSec: number,
-  geometry: Parameters<typeof renderCorrected>[1] | null,
+/**
+ * 원본 크기(또는 줄인) 그림과 보정본을 화면용 주소·저장용 PNG 로 묶는다. 동영상 장면과 사진이 함께 쓴다.
+ * 실패하면 받은 캔버스와 만든 주소를 전부 놓고 예외를 던진다.
+ */
+async function packRendered(
+  originalIn: HTMLCanvasElement,
+  correctedIn: HTMLCanvasElement | null,
+  grabbedTimeSec: number | null,
 ): Promise<RenderedCandidate> {
-  const grabbedTimeSec = await seekTo(video.video, requestedTimeSec);
-  const native: FrameSize = { width: video.width, height: video.height };
-
-  // 원본 크기로 한 번 그린다. 보정본과 원본 장면이 같은 한 장에서 나오게 한다.
-  let original: HTMLCanvasElement | null = document.createElement("canvas");
-  let corrected: HTMLCanvasElement | null = null;
   const urls: string[] = [];
   let thumbUrl: string | null = null;
   try {
-    original.width = native.width;
-    original.height = native.height;
-    context(original).drawImage(video.video, 0, 0, native.width, native.height);
-    corrected = geometry ? renderCorrected(original, geometry) : null;
-
-    const originalUrl = await jpegUrl(original, native, DISPLAY_LONG_SIDE);
+    const originalUrl = await jpegUrl(originalIn, originalIn, DISPLAY_LONG_SIDE);
     urls.push(originalUrl);
     let correctedUrl: string | null = null;
-    if (corrected) {
-      correctedUrl = await jpegUrl(corrected, corrected, DISPLAY_LONG_SIDE);
+    if (correctedIn) {
+      correctedUrl = await jpegUrl(correctedIn, correctedIn, DISPLAY_LONG_SIDE);
       urls.push(correctedUrl);
     }
-    const thumbSource = corrected ?? original;
+    const thumbSource = correctedIn ?? originalIn;
     thumbUrl = await jpegUrl(thumbSource, thumbSource, THUMB_LONG_SIDE);
 
-    let originalCanvas: HTMLCanvasElement | null = original;
-    let correctedCanvas: HTMLCanvasElement | null = corrected;
+    let originalCanvas: HTMLCanvasElement | null = originalIn;
+    let correctedCanvas: HTMLCanvasElement | null = correctedIn;
     let thumb: string | null = thumbUrl;
     return {
       thumbUrl,
@@ -164,13 +160,66 @@ async function renderCandidateOf(
       },
     };
   } catch (e) {
-    release(original);
-    release(corrected);
-    original = null;
+    release(originalIn);
+    release(correctedIn);
     for (const u of urls) URL.revokeObjectURL(u);
     if (thumbUrl) URL.revokeObjectURL(thumbUrl);
     throw e;
   }
+}
+
+async function renderCandidateOf(
+  video: OpenedVideo,
+  requestedTimeSec: number,
+  geometry: Parameters<typeof renderCorrected>[1] | null,
+): Promise<RenderedCandidate> {
+  const grabbedTimeSec = await seekTo(video.video, requestedTimeSec);
+  const native: FrameSize = { width: video.width, height: video.height };
+
+  // 원본 크기로 한 번 그린다. 보정본과 원본 장면이 같은 한 장에서 나오게 한다.
+  const original = document.createElement("canvas");
+  let corrected: HTMLCanvasElement | null = null;
+  try {
+    original.width = native.width;
+    original.height = native.height;
+    context(original).drawImage(video.video, 0, 0, native.width, native.height);
+    corrected = geometry ? renderCorrected(original, geometry) : null;
+  } catch (e) {
+    release(original);
+    release(corrected);
+    throw e;
+  }
+  return packRendered(original, corrected, grabbedTimeSec);
+}
+
+/**
+ * 사진 여러 장에서 고른 한 장을 **원본 크기로 다시 풀어** 그린다(PRD v0.3.1).
+ *
+ * 보정본은 풀어 둔 원본 크기의 그림에서 바로 만든다(변환의 눈금이 원본 픽셀이다). 원본 사진 그림은
+ * 긴 변 `maxLongSidePx` 까지로 줄여 그린다 — 2,400만 화소를 그대로 캔버스에 올리면 아이폰 사파리의
+ * 캔버스 한도를 넘는다(미확인). 온전한 화소는 고른 원본 파일에 있다. 풀어 둔 그림은 그리자마자 놓는다.
+ */
+async function renderPhotoOf(
+  set: OpenedPhotoSet,
+  photoNumber: number,
+  geometry: Parameters<typeof renderCorrected>[1] | null,
+  maxLongSidePx: number,
+): Promise<RenderedCandidate> {
+  const opened = await openPhoto(set, photoNumber);
+  if (opened === null) throw new Error(`${photoNumber}번째 사진을 다시 열지 못했습니다.`);
+  let original: HTMLCanvasElement | null = null;
+  let corrected: HTMLCanvasElement | null = null;
+  try {
+    original = scaled(opened.bitmap, { width: opened.width, height: opened.height }, maxLongSidePx);
+    corrected = geometry ? renderCorrected(opened.bitmap, geometry) : null;
+  } catch (e) {
+    release(original);
+    release(corrected);
+    throw e;
+  } finally {
+    opened.close();
+  }
+  return packRendered(original, corrected, null);
 }
 
 function hex(buffer: ArrayBuffer): string {
@@ -186,7 +235,7 @@ async function sha256(blob: Blob): Promise<string | null> {
   return hex(await subtle.digest("SHA-256", await blob.arrayBuffer()));
 }
 
-export const browserDeps: PickDeps<LoadedModel, OpenedReference, OpenedVideo> = {
+export const browserDeps: PickDeps<LoadedModel, OpenedReference, OpenedVideo, OpenedPhotoSet> = {
   async loadModel(onProgress) {
     const loaded = await loadPickLandmarker(onProgress);
     return { landmarker: loaded.landmarker, close: () => loaded.landmarker.close() };
@@ -197,6 +246,9 @@ export const browserDeps: PickDeps<LoadedModel, OpenedReference, OpenedVideo> = 
   openVideo,
   analyzeVideo: (model, reference, video, hooks) => analyzeVideo(model.landmarker, reference, video, hooks),
   renderCandidate: renderCandidateOf,
+  openPhotos: async (files) => openPhotoSet(files),
+  analyzePhotos: (model, reference, photos, hooks) => analyzePhotoSet(model.landmarker, reference, photos, hooks),
+  renderPhoto: renderPhotoOf,
   hashBlob: sha256,
   urlFor: (blob) => URL.createObjectURL(blob),
   revokeUrl: (url) => URL.revokeObjectURL(url),

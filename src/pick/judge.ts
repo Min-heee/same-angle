@@ -16,7 +16,7 @@ import { outputGeometry, type OutputGeometry } from "./output";
 import { RULES, type Rules } from "./rules";
 import { verdictOf, type Verdict } from "./select";
 
-export type StopCode = "S1" | "S2" | "S3" | "S4" | "S5";
+export type StopCode = "S1" | "S2" | "S3" | "S4" | "S5" | "S6";
 
 /** 표의 순서. 경고가 여럿이면 이 순서대로 3개까지 펼쳐 보인다. */
 export const WARNING_ORDER = [
@@ -49,6 +49,7 @@ export interface JudgeNumbers {
   /** 기준 방향의 좌우를 뒤집었을 때의 각도차(°). */
   mirroredAngleDeg: number | null;
   referenceOrientation: Orientation;
+  /** 동영상의 세로·가로. 사진 여러 장에서는 그 후보 사진의 세로·가로. */
   videoOrientation: Orientation;
   /** 관심 영역의 빈 비율(0~1). */
   roiEmptyFraction: number | null;
@@ -68,8 +69,8 @@ export interface JudgeNumbers {
   position: number;
   /** 분석 때와 다시 쟀을 때 보는 방향의 차(°). */
   remeasureShiftDeg: number | null;
-  /** 동영상 길이(초). */
-  videoDurationSec: number;
+  /** 동영상 길이(초). 사진 여러 장에서 골랐으면 길이가 없어 null 이다. */
+  videoDurationSec: number | null;
   /** 기준 사진의 피부 패치 클리핑 비율. */
   referenceClipRatio: number | null;
 }
@@ -112,7 +113,7 @@ export function warningsOf(n: JudgeNumbers, rules: Rules = RULES): WarningCode[]
   if (n.residual > rules.warn.maxResidual) w.add("W13");
   if (n.position > rules.warn.maxPosition) w.add("W4");
   if (n.remeasureShiftDeg !== null && n.remeasureShiftDeg > rules.warn.maxRemeasureShiftDeg) w.add("W5");
-  if (n.videoDurationSec > rules.sampling.maxDurationSec) w.add("W6");
+  if (n.videoDurationSec !== null && n.videoDurationSec > rules.sampling.maxDurationSec) w.add("W6");
   if (n.referenceClipRatio !== null && n.referenceClipRatio > rules.exclude.maxClipRatio) w.add("W7");
 
   return WARNING_ORDER.filter((c) => w.has(c));
@@ -151,10 +152,31 @@ export interface JudgeContext {
   reference: Measured & { face: FaceReading };
   /** 기준 사진의 원본 크기(회전 정보를 반영한 뒤). */
   referenceOriginal: FrameSize;
-  /** 동영상의 원본 해상도(회전 정보를 반영한 뒤). */
+  /** 동영상의 원본 해상도(회전 정보를 반영한 뒤). 사진 여러 장에서는 **그 후보 사진**의 원본 크기. */
   videoNative: FrameSize;
-  /** 동영상 길이(초). */
-  videoDurationSec: number;
+  /** 동영상 길이(초). 사진 여러 장에서는 null. */
+  videoDurationSec: number | null;
+  /** 보정본의 긴 변 상한(px). 없으면 `rules.output.maxLongSidePx`. 사진 여러 장에서는 더 크게 잡는다. */
+  outputMaxLongSidePx?: number;
+}
+
+/**
+ * 사진 여러 장에서 고른 후보 하나의 판정 맥락(PRD v0.3.1). 후보마다 그 사진의 원본 크기를 넣는다 —
+ * 묶음에 크기가 다른 사진이 섞여 있을 수 있다. 길이는 없고(null), 보정본의 긴 변 상한은
+ * `rules.photos.outputMaxLongSidePx` 다.
+ */
+export function photoJudgeContext(
+  base: Pick<JudgeContext, "reference" | "referenceOriginal">,
+  photoSize: FrameSize,
+  rules: Rules = RULES,
+): JudgeContext {
+  return {
+    reference: base.reference,
+    referenceOriginal: base.referenceOriginal,
+    videoNative: photoSize,
+    videoDurationSec: null,
+    outputMaxLongSidePx: rules.photos.outputMaxLongSidePx,
+  };
 }
 
 export interface CandidateInput {
@@ -185,6 +207,7 @@ export function judgeCandidate(c: CandidateInput, ctx: JudgeContext, rules: Rule
       referenceBox: ctx.reference.face.box,
     },
     rules,
+    ctx.outputMaxLongSidePx,
   );
   const numbers: JudgeNumbers = {
     angleDeg: c.comparison.angleDeg,
