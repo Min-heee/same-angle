@@ -6,11 +6,11 @@
 
 **주소:** https://same-angle.vercel.app (고르는 화면: https://same-angle.vercel.app/pick/)
 
-| ① 첫 화면 | ② 고른 결과 | ③ 겹쳐 보기 | ④ 가까운 장면이 없을 때 |
-|---|---|---|---|
-| [<img src="docs/screens/1-home.png" width="190" alt="첫 화면: 동영상에서 같은 각도 사진 고르기 버튼과 쓰는 순서">](docs/screens/1-home.png) | [<img src="docs/screens/3-pick-result.png" width="190" alt="결과 화면: 기준 사진과 이번 사진을 나란히, 그 아래 차이 숫자">](docs/screens/3-pick-result.png) | [<img src="docs/screens/4-pick-overlay.png" width="190" alt="기준 사진 위에 이번 사진을 겹쳐 본 화면과 진하기 조절">](docs/screens/4-pick-overlay.png) | [<img src="docs/screens/5-pick-noclose.png" width="190" alt="가까운 장면이 없습니다: 다시 찍기 권장과 동영상이 지나간 방향 그림">](docs/screens/5-pick-noclose.png) |
+| ① 첫 화면 | ② 동영상·사진 고르기 | ③ 고른 결과 | ④ 겹쳐 보기 | ⑤ 가까운 장면이 없을 때 |
+|---|---|---|---|---|
+| [<img src="docs/screens/1-home.png" width="150" alt="첫 화면: 동영상에서 같은 각도 사진 고르기 버튼과 쓰는 순서">](docs/screens/1-home.png) | [<img src="docs/screens/2-pick-input.png" width="150" alt="2단계 동영상·사진: 동영상 고르기, 지금 바로 찍기, 사진 여러 장 고르기(연사) 버튼">](docs/screens/2-pick-input.png) | [<img src="docs/screens/3-pick-result.png" width="150" alt="결과 화면: 기준 사진과 이번 사진을 나란히, 그 아래 차이 숫자">](docs/screens/3-pick-result.png) | [<img src="docs/screens/4-pick-overlay.png" width="150" alt="기준 사진 위에 이번 사진을 겹쳐 본 화면과 진하기 조절">](docs/screens/4-pick-overlay.png) | [<img src="docs/screens/5-pick-noclose.png" width="150" alt="가까운 장면이 없습니다: 다시 찍기 권장과 동영상이 지나간 방향 그림">](docs/screens/5-pick-noclose.png) |
 
-②③은 코드로 그린 얼굴 그림과, 그 그림을 기울이고 옮겨 만든 동영상을 넣어 맥 크롬에서 돌린 화면입니다. ④는 지어낸 숫자로 그린 화면입니다. 사람 사진은 없습니다.
+②③④는 코드로 그린 얼굴 그림 1장과, 그 그림을 기울이고 옮겨 만든 사진 22장을 연사 사진 자리에 넣어 맥 크롬에서 돌린 화면입니다. ⑤는 지어낸 숫자로 그린 화면입니다. 사람 사진은 없습니다.
 
 ## 2026-10-02 에 바뀐 것
 
