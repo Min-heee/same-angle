@@ -35,17 +35,44 @@ function useWakeLock(active: boolean): void {
   useEffect(() => {
     if (!active) return;
     let lock: WakeLockLike | null = null;
+    let pending = false;
     let gone = false;
     const nav = navigator as Navigator & { wakeLock?: { request(type: "screen"): Promise<WakeLockLike> } };
-    nav.wakeLock?.request("screen").then(
-      (l) => {
-        if (gone) void l.release().catch(() => {});
-        else lock = l;
-      },
-      () => {},
-    );
+    const request = () => {
+      if (!nav.wakeLock || lock || pending) return;
+      pending = true;
+      nav.wakeLock.request("screen").then(
+        (l) => {
+          pending = false;
+          if (gone) {
+            void l.release().catch(() => {});
+            return;
+          }
+          lock = l;
+          // 화면이 숨겨지면 브라우저가 잠금을 스스로 푼다. 그때 비워 둬야 돌아왔을 때 다시 부탁한다.
+          (l as WakeLockLike & { addEventListener?: (t: "release", f: () => void) => void }).addEventListener?.(
+            "release",
+            () => {
+              if (lock === l) lock = null;
+            },
+          );
+        },
+        () => {
+          pending = false;
+        },
+      );
+    };
+    // 분석은 화면이 숨겨져도 이어지므로, 돌아오면 풀린 잠금을 다시 부탁한다.
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      if (lock && (lock as WakeLockLike & { released?: boolean }).released) lock = null;
+      request();
+    };
+    request();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       gone = true;
+      document.removeEventListener("visibilitychange", onVisibility);
       if (lock) void lock.release().catch(() => {});
     };
   }, [active]);
