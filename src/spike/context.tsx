@@ -547,6 +547,11 @@ export function SpikeProvider({ children }: { children: ReactNode }) {
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {
+        // 복귀 2초 확인이 남아 있으면 숨겨진 채로 돌아 백그라운드 mute 를 "끊김"으로 잘못 기록한다.
+        if (checkTimer) {
+          clearTimeout(checkTimer);
+          checkTimer = null;
+        }
         onHidden("화면 숨김");
         return;
       }

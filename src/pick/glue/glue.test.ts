@@ -100,6 +100,22 @@ describe("loadPickLandmarker — 재는 방식은 하나", () => {
   });
 });
 
+describe("drawForMeasure — 재사용하는 캔버스", () => {
+  it("크기가 같아도 그리기 전에 지운다(투명한 사진이 앞 사진 위에 겹치지 않게)", async () => {
+    const { drawForMeasure } = await import("./measure");
+    const c = fakeCanvas();
+    const a = {} as CanvasImageSource;
+    const b = {} as CanvasImageSource;
+    drawForMeasure(c as unknown as HTMLCanvasElement, a, 400, 300);
+    c.log.length = 0;
+    drawForMeasure(c as unknown as HTMLCanvasElement, b, 400, 300);
+    const clear = c.log.findIndex((e) => e[0] === "clearRect");
+    const draw = c.log.findIndex((e) => e[0] === "drawImage");
+    expect(c.log[clear]).toEqual(["clearRect", 0, 0, 400, 300]);
+    expect(clear).toBeLessThan(draw);
+  });
+});
+
 describe("createMeasurer — 픽셀 지표를 그대로 측정값에 싣는다", () => {
   it("피부 패치가 전부 하얗게 날아갔으면 클리핑 비율 1, 평균 휘도 255 [B03]", async () => {
     const { createMeasurer } = await import("./measure");

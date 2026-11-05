@@ -97,5 +97,7 @@ export function drawForMeasure(
   if (canvas.height !== h) canvas.height = h;
   const ctx = context(canvas);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // 같은 크기면 캔버스가 초기화되지 않는다. 투명한 사진(PNG 등)이 앞 사진 위에 겹쳐 그려지지 않게 지운다.
+  ctx.clearRect(0, 0, w, h);
   ctx.drawImage(source, 0, 0, w, h);
 }

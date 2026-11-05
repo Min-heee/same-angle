@@ -51,7 +51,13 @@ function headersFor(urlPath) {
 
 /** ROOT 밖으로 나가는 경로를 막는다. */
 function safeJoin(urlPath) {
-  const decoded = decodeURIComponent(urlPath.split("?")[0]);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath.split("?")[0]);
+  } catch {
+    // 깨진 퍼센트 인코딩(예: /%E0%A4%A)은 URIError 를 던진다. 비동기 핸들러 밖으로 새면 서버가 죽는다.
+    return null;
+  }
   const rel = normalize(decoded).replace(/^(\.\.[/\\])+/, "");
   const full = join(ROOT, rel);
   return full.startsWith(ROOT) ? full : null;

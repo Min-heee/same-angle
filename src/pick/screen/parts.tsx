@@ -489,9 +489,9 @@ export function TraceFigure({ plot, passDeg, source }: { plot: TracePlot; passDe
         <line className={s.traceAxis} x1={0} y1={c.y} x2={plot.size} y2={c.y} />
         <line className={s.traceAxis} x1={c.x} y1={0} x2={c.x} y2={plot.size} />
         <circle className={s.tracePass} cx={c.x} cy={c.y} r={plot.passRadius} />
-        {plot.points.map((p) => (
+        {plot.points.map((p, i) => (
           <circle
-            key={p.timeSec}
+            key={i}
             className={p.usable ? s.traceDot : s.traceDotOff}
             cx={p.x}
             cy={p.y}
